@@ -1,0 +1,19 @@
+# CLI tool, only in development environment.
+# https://goframe.org/docs/cli
+gfcli:
+  gen:
+    dao:
+      - link:            "mysql:poker:poker123456@tcp(127.0.0.1:3307)/app?charset=utf8mb4"
+        path:            "./internal"
+        group:           "default"
+        descriptionTag:  true
+        noJsonTag:       false
+        noModelComment:  false
+        overwriteDao:    false
+        tables:          ""
+        tablesEx:        ""
+
+  docker:
+    build: "-a amd64 -s linux -p temp -ew"
+    tagPrefixes:
+      - my.image.pub/my-app

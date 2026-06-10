@@ -1,1 +1,4 @@
-# claude_poker_be
+# GoFrame Template For SingleRepo
+
+Quick Start: 
+- https://goframe.org/quick
