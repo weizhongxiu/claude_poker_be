@@ -134,19 +134,21 @@ func StartSession(ctx context.Context, tableID, creatorID int64) (sessionID int6
 	if e2 := g.DB().Model("table_seats").Fields("user_id,seat_no,chips").
 		Where("table_id", tableID).Where("status", 1).Scan(&seatedPlayers); e2 == nil {
 		for _, sp := range seatedPlayers {
-			// Get total buyin for this player
-			buyinVal, _ := g.DB().Model("buyin_records").
-				Fields("COALESCE(SUM(amount),0)").
-				Where("user_id", sp.UserID).Where("status", 2).Value()
+			// Use current seat chips as initial buyin (avoids summing cross-session buyin_records)
 			_, _ = g.DB().Model("session_players").Data(g.Map{
 				"session_id":  sessionID,
 				"user_id":     sp.UserID,
 				"seat_no":     sp.SeatNo,
-				"total_buyin": buyinVal.Int64(),
-				"chips_final": buyinVal.Int64(),
+				"total_buyin": sp.Chips,
+				"chips_final": sp.Chips,
 				"total_hands": 0,
 				"result":      0,
 			}).Insert()
+			// Tag the initial buyin record with this session_id
+			_, _ = g.DB().Model("buyin_records").
+				Where("user_id", sp.UserID).Where("session_id", 0).Where("status", 2).
+				OrderDesc("id").Limit(1).
+				Data(g.Map{"session_id": sessionID}).Update()
 		}
 	}
 	return

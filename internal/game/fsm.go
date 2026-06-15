@@ -98,19 +98,32 @@ func (f *HandFSM) Run(ctx context.Context) {
 			return
 		}
 
+		// Advance through stages. In all-in run-out scenarios multiple streets can
+		// complete back-to-back without any player action; handle them in an inner
+		// loop so we never block in the outer select waiting for a 30-second timeout.
 		if f.isRoundEnd() {
-			if !f.advanceStage() {
-				// No more stages (all-in run-out), go to showdown
-				f.goToShowdown()
-				f.finishHand()
-				return
+			for {
+				if !f.advanceStage() {
+					// No more stages (all-in run-out), go to showdown
+					f.goToShowdown()
+					f.finishHand()
+					return
+				}
+				if f.state.Stage == StageShowdown {
+					f.finishHand()
+					return
+				}
+				if !f.isRoundEnd() {
+					// Active players still in the hand – need a timer and broadcast.
+					f.startActionTimer(ctx)
+					f.notifyStageChange()
+					break
+				}
+				// All-in run-out: broadcast new community cards, then advance again
+				// after a short pause so clients can animate the deal.
+				f.notifyStageChange()
+				time.Sleep(1200 * time.Millisecond)
 			}
-			if f.state.Stage == StageShowdown {
-				f.finishHand()
-				return
-			}
-			f.startActionTimer(ctx) // new stage: start timer for first player
-			f.notifyStageChange()
 		} else {
 			// Same stage, next player's turn: restart the 30s timer
 			f.startActionTimer(ctx)
@@ -581,7 +594,6 @@ func (f *HandFSM) finishHand() {
 
 	// Compute final ChipsEnd (start chips - invested + winnings)
 	for _, pe := range playerEndStates {
-		invested := pe.ForcedBet + pe.TotalBet
 		pe.ChipsEnd = s.Players[pe.SeatNo].Chips + pe.ChipsEnd // remaining + won
 		pe.Result = pe.ChipsEnd - pe.ChipsStart                 // net P&L = ChipsEnd - ChipsStart
 	}

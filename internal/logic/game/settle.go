@@ -250,6 +250,12 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 			ctx2 := context.Background()
 			if e := startNextHand(ctx2, tableID, sessionID, nextIdx); e != nil {
 				g.Log().Errorf(ctx2, "startNextHand error: %v", e)
+				// Broadcast a stage=0 state so clients show "waiting" instead of freezing.
+				ws.GlobalHub().BroadcastTable(tableID, ws.MsgTypeGameState, g.Map{
+					"game_id": 0, "stage": 0, "pot": 0,
+					"current_seat": -1, "community_cards": []string{},
+					"players": []interface{}{}, "hand_index": nextIdx,
+				})
 			}
 		}()
 	}

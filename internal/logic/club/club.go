@@ -169,11 +169,14 @@ func ListMembers(ctx context.Context, clubID int64, page, pageSize int) (list []
 	return
 }
 
-// ListClubTables returns tables belonging to a club.
+// ListClubTables returns tables belonging to a club that have an active, non-expired session.
 func ListClubTables(ctx context.Context, clubID int64, page, pageSize int) (list []v1.ClubTableItem, total int, err error) {
-	m := g.DB().Model("tables").
-		Where("club_id", clubID).
-		Where("status", g.Slice{1, 2})
+	// Only show tables with a running session that hasn't exceeded its time limit
+	m := g.DB().Model("tables t").
+		InnerJoin("room_sessions rs",
+			"rs.table_id = t.id AND rs.status = 1 AND (rs.duration = 0 OR DATE_ADD(rs.started_at, INTERVAL rs.duration HOUR) > NOW())").
+		Where("t.club_id", clubID).
+		Where("t.status", 2)
 
 	total, err = m.Count()
 	if err != nil {
@@ -192,7 +195,8 @@ func ListClubTables(ctx context.Context, clubID int64, page, pageSize int) (list
 		Status         int    `json:"status"`
 	}
 	var rows []*row
-	err = m.Page(page, pageSize).OrderDesc("id").Scan(&rows)
+	err = m.Fields("t.id, t.table_no, t.name, t.game_type, t.small_blind, t.big_blind, t.current_players, t.max_seats, t.status").
+		Page(page, pageSize).OrderDesc("t.id").Scan(&rows)
 	if err != nil {
 		return
 	}

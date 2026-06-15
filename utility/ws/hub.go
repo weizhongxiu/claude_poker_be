@@ -27,6 +27,7 @@ const (
 	MsgTypeShowdown     = "showdown"      // Showdown: reveal all hole cards
 	MsgTypeSessionStarted = "session_started" // Session started
 	MsgTypeSessionEnd     = "session_end"     // Session ended
+	MsgTypeChipUpdate     = "chip_update"     // Chip count changed (rebuy)
 	MsgTypeError          = "error"           // Error notification
 	MsgTypePong           = "pong"            // Heartbeat response
 

@@ -278,6 +278,12 @@ export const useGameStore = defineStore('game', () => {
         })
         break
 
+      case 'chip_update':
+        if (state.players[data.seat_no]) {
+          state.players[data.seat_no] = { ...state.players[data.seat_no], chips: data.chips }
+        }
+        break
+
       case 'rank_update':
         rankList.value = data.players || []
         break

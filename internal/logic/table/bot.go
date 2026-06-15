@@ -55,7 +55,10 @@ func AddBots(ctx context.Context, tableID int64, count int) ([]int64, error) {
 		return nil, gerror.New("没有空余座位")
 	}
 
-	buyin := table.MinBuyin * 10 // bots buy in with 10× min
+	buyin := table.MinBuyin * 10 // bots buy in with 10× min, capped at MaxBuyin
+	if table.MaxBuyin > 0 && buyin > table.MaxBuyin {
+		buyin = table.MaxBuyin
+	}
 
 	var botIDs []int64
 	for i := 0; i < count; i++ {

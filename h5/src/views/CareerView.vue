@@ -21,16 +21,6 @@
 
     <!-- 牌局 Tab 内容 -->
     <div v-if="activeTab === 'game'" class="page-body tab-body">
-      <!-- 游戏类型 -->
-      <div class="chip-row">
-        <span
-          v-for="g in gameTypes"
-          :key="g.key"
-          class="chip"
-          :class="{ active: activeGame === g.key }"
-          @click="activeGame = g.key; load()"
-        >{{ g.label }}</span>
-      </div>
       <!-- 时间筛选 -->
       <div class="time-row">
         <div class="time-tabs">

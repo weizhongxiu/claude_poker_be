@@ -9,7 +9,9 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 
+	"claude-test/internal/game"
 	"claude-test/internal/model/entity"
+	"claude-test/utility/ws"
 )
 
 // RebuyRequest creates a rebuy request. Auto-approved when buyin_approval=0.
@@ -86,18 +88,21 @@ func ApproveBuyin(ctx context.Context, adminUserID, recordID int64, approve bool
 
 func executeRebuy(ctx context.Context, userID, sessionID, amount int64) error {
 	type seatRow struct {
-		ID int64 `orm:"id"`
+		ID      int64 `orm:"id"`
+		TableID int64 `orm:"table_id"`
+		SeatNo  int   `orm:"seat_no"`
+		Chips   int64 `orm:"chips"`
 	}
 	var seat seatRow
 	if e := g.DB().Model("table_seats ts").
 		LeftJoin("room_sessions rs", "rs.table_id = ts.table_id").
-		Fields("ts.id").
+		Fields("ts.id, ts.table_id, ts.seat_no, ts.chips").
 		Where("rs.id", sessionID).Where("ts.user_id", userID).Where("ts.status", 1).
 		Scan(&seat); e != nil || seat.ID == 0 {
 		return gerror.New("玩家未在座，无法补码")
 	}
 
-	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		res, e := tx.Model("user_wallets").
 			Where("user_id", userID).Where(fmt.Sprintf("chips >= %d", amount)).
 			Data(g.Map{
@@ -118,8 +123,25 @@ func executeRebuy(ctx context.Context, userID, sessionID, amount int64) error {
 		_, _ = tx.Model("session_players").
 			Where("session_id", sessionID).Where("user_id", userID).
 			Data(g.Map{"total_buyin": gdb.Raw(fmt.Sprintf("total_buyin + %d", amount))}).Update()
+		// Also tag any unlinked buyin_records row (session_id=0) to this session
+		_, _ = tx.Model("buyin_records").
+			Where("user_id", userID).Where("session_id", 0).Where("status", 2).
+			OrderDesc("id").Limit(1).
+			Data(g.Map{"session_id": sessionID}).Update()
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	newChips := seat.Chips + amount
+	// Sync new chip count into engine's in-memory state so the next hand sees it immediately
+	game.GlobalEngine().UpdatePlayerChips(seat.TableID, userID, newChips)
+	// Broadcast chip update so all clients refresh the chip display immediately
+	ws.GlobalHub().BroadcastTable(seat.TableID, ws.MsgTypeChipUpdate, g.Map{
+		"seat_no": seat.SeatNo,
+		"chips":   newChips,
+	})
+	return nil
 }
 
 // GetTableRank returns real-time ranking for a table.

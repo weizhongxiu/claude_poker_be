@@ -169,9 +169,12 @@ func (e *Engine) StartHand(tableID int64, gameID int64, handNo string, handIdx i
 		return fmt.Errorf("need at least 2 players")
 	}
 
-	// Copy players for this hand
+	// Copy players for this hand; skip players with no chips (awaiting rebuy)
 	players := make(map[int]*PlayerState)
 	for k, v := range room.players {
+		if v.Chips <= 0 {
+			continue
+		}
 		cp := *v
 		cp.HoleCards = nil
 		cp.Bet = 0

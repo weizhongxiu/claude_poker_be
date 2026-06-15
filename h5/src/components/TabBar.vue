@@ -35,7 +35,7 @@ const makeIcon = (paths, vboxSize = '0 0 24 24') =>
     props: ['active'],
     render() {
       return h('svg', { viewBox: vboxSize, fill: 'none', width: 22, height: 22 },
-        paths.map(d => h('path', { d, fill: this.active ? '#0EC4B0' : '#BBBBBB', fillRule: 'evenodd' }))
+        paths.map(d => h('path', { d, fill: this.active ? '#fff' : '#BBBBBB', fillRule: 'evenodd' }))
       )
     }
   })
@@ -57,11 +57,11 @@ const IconProfile = makeIcon([
 const IconHome = defineComponent({
   props: ['active'],
   render() {
-    const c = this.active ? '#0EC4B0' : '#BBBBBB'
+    const c = this.active ? '#fff' : '#BBBBBB'
     return h('svg', { viewBox: '0 0 24 24', fill: 'none', width: 26, height: 26 }, [
       h('rect', { x: 3, y: 5, width: 18, height: 14, rx: 3, fill: c }),
-      h('rect', { x: 6, y: 8, width: 5, height: 8, rx: 1, fill: '#fff', opacity: .8 }),
-      h('rect', { x: 13, y: 8, width: 5, height: 8, rx: 1, fill: '#fff', opacity: .8 }),
+      h('rect', { x: 6, y: 8, width: 5, height: 8, rx: 1, fill: this.active ? '#0EC4B0' : '#f0f0f0', opacity: .8 }),
+      h('rect', { x: 13, y: 8, width: 5, height: 8, rx: 1, fill: this.active ? '#0EC4B0' : '#f0f0f0', opacity: .8 }),
     ])
   }
 })
@@ -95,29 +95,21 @@ function go(item) {
   flex: 1; display: flex; flex-direction: column; align-items: center;
   justify-content: center; padding-top: 6px; cursor: pointer;
   gap: 2px; transition: opacity .15s;
-  border-radius: 12px; margin: 4px 2px;
 }
 .tab-item:active { opacity: .6; }
 .tab-label {
   font-size: 10px; color: var(--text-3); transition: color .15s;
 }
-.tab-item.active .tab-label { color: var(--primary); font-weight: 600; }
-/* Green background for active non-center tabs */
-.tab-item.active:not(:nth-child(3)) {
-  background: rgba(14, 196, 176, 0.12);
-}
 
-/* Center tab elevated */
-.tab-item:nth-child(3) {
-  position: relative;
-}
-.tab-item:nth-child(3) .tab-icon {
+/* All active tabs: green circle icon + green label */
+.tab-item.active .tab-label { color: var(--primary); font-weight: 600; }
+.tab-item.active .tab-icon {
   width: 54px; height: 54px; border-radius: 27px;
   background: var(--primary);
   display: flex; align-items: center; justify-content: center;
   margin-top: -24px;
   box-shadow: 0 4px 16px rgba(14,196,176,.5);
 }
-.tab-item:nth-child(3) .tab-icon :deep(svg) { width: 26px; height: 26px; }
-.tab-item:nth-child(3) .tab-label { color: var(--primary); font-weight: 600; }
+
+.tab-item:nth-child(3) { position: relative; }
 </style>

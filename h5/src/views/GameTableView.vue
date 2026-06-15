@@ -238,9 +238,22 @@
       </div>
     </div>
 
-    <!-- 错误提示 -->
-    <transition name="fade">
-      <div v-if="errorMsg" class="error-toast">{{ errorMsg }}</div>
+    <!-- 提示 toast -->
+    <transition name="toast-slide">
+      <div v-if="errorMsg" class="game-toast">{{ errorMsg }}</div>
+    </transition>
+
+    <!-- 自定义弹窗 -->
+    <transition name="dialog-fade">
+      <div v-if="dialogVisible" class="game-dialog-mask" @click.self="() => closeDialog(false)">
+        <div class="game-dialog">
+          <div class="game-dialog-body">{{ dialogMsg }}</div>
+          <div class="game-dialog-actions">
+            <button v-if="dialogConfirm" class="game-dialog-btn cancel" @click="closeDialog(false)">取消</button>
+            <button class="game-dialog-btn confirm" @click="closeDialog(true)">确定</button>
+          </div>
+        </div>
+      </div>
     </transition>
 
     <!-- 断线提示 -->
@@ -560,6 +573,27 @@ const mySeat        = ref(-1)
 const seated        = ref(false)
 const errorMsg      = ref('')
 let   errorTimer    = null
+const dialogMsg     = ref('')
+const dialogVisible = ref(false)
+const dialogConfirm = ref(false)    // true = 确认弹窗（有取消按钮）
+let   dialogResolve = null
+function showDialog(msg) {
+  dialogMsg.value = msg
+  dialogConfirm.value = false
+  dialogVisible.value = true
+}
+function showConfirm(msg) {
+  return new Promise(resolve => {
+    dialogMsg.value = msg
+    dialogConfirm.value = true
+    dialogVisible.value = true
+    dialogResolve = resolve
+  })
+}
+function closeDialog(result = false) {
+  dialogVisible.value = false
+  if (dialogResolve) { dialogResolve(result); dialogResolve = null }
+}
 const maxSeats      = ref(9)
 const tableMinBuyin = ref(200)
 const tableMaxBuyin = ref(2000)
@@ -964,7 +998,7 @@ async function confirmTakeSeat() {
         chips: seatBuyinAmount.value,
       }
     }
-  } catch (e) { alert(e.message || '入座失败') }
+  } catch (e) { showDialog(e.message || '入座失败') }
   finally { takingSeat.value = false }
 }
 
@@ -977,7 +1011,7 @@ async function tryStartSession() {
       game.state.sessionId = data.session_id
       startSessionTimer(new Date().toISOString(), tableDuration.value)
     }
-  } catch (e) { if (!e.message?.includes('已开局')) alert(e.message || '开局失败') }
+  } catch (e) { if (!e.message?.includes('已开局')) showDialog(e.message || '开局失败') }
   finally { starting.value = false }
 }
 
@@ -988,8 +1022,8 @@ async function doAddBots() {
     const data = await addBots(tableId.value, botCount.value)
     showBotSheet.value = false
     await loadTableInfo()
-    alert(`已添加 ${data?.count || botCount.value} 个机器人`)
-  } catch (e) { alert(e.message || '添加失败') }
+    showDialog(`已添加 ${data?.count || botCount.value} 个机器人`)
+  } catch (e) { showDialog(e.message || '添加失败') }
   finally { addingBots.value = false }
 }
 
@@ -1015,7 +1049,7 @@ async function handleMenu(key) {
     game.disconnect(); router.push('/home'); return
   }
   if (key === 'disband') {
-    if (!confirm('确认解散牌局？')) return
+    if (!await showConfirm('确认解散牌局？')) return
     try { if (game.state.sessionId) await endSession(game.state.sessionId, 2) } catch {}
     game.disconnect(); router.push('/home')
   }
@@ -1029,12 +1063,12 @@ function openRebuySheet() {
 async function doRebuy() {
   try {
     const sid = game.state.sessionId
-    if (!sid) { alert('场次未开始'); return }
+    if (!sid) { showDialog('场次未开始'); return }
     await buyIn(sid, rebuyAmount.value)
     showRebuy.value = false
     await auth.fetchProfile()
     showToast(`补码 ${rebuyAmount.value} 成功`)
-  } catch (e) { alert(e.message) }
+  } catch (e) { showDialog(e.message || '操作失败') }
 }
 
 function copyCode() {
@@ -1178,7 +1212,10 @@ watch(() => game.lastResult, result => {
       setTimeout(() => {
         showYouWin.value = false
         game.flushPendingHand()
-      }, 6000)
+      }, 2500)
+    } else {
+      // 非赢家不显示弹窗，直接放行下一手
+      game.flushPendingHand()
     }
   }, 500)
 })
@@ -1233,10 +1270,69 @@ onUnmounted(() => {
 /* ── 全局 ── */
 * { box-sizing: border-box; }
 
-.error-toast {
-  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-  background: rgba(220,50,50,.9); color: #fff; padding: 8px 20px;
-  border-radius: 20px; font-size: 14px; z-index: 200; pointer-events: none;
+/* ── Toast ── */
+.game-toast {
+  position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
+  background: rgba(10,10,10,.82); color: #fff;
+  padding: 9px 22px; border-radius: 24px; font-size: 13px;
+  letter-spacing: .3px; z-index: 300; pointer-events: none;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.12);
+  white-space: nowrap;
+}
+.toast-slide-enter-active { animation: toastIn .25s ease; }
+.toast-slide-leave-active { animation: toastIn .2s ease reverse; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── 自定义弹窗 ── */
+.game-dialog-mask {
+  position: fixed; inset: 0; z-index: 400;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(3px);
+}
+.game-dialog {
+  background: linear-gradient(160deg, #1e3a28 0%, #142b1e 100%);
+  border: 1px solid rgba(14,196,176,.35);
+  border-radius: 20px;
+  padding: 28px 24px 20px;
+  min-width: 260px; max-width: 80vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06) inset;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+}
+.game-dialog-body {
+  color: #e8f5e9; font-size: 15px; line-height: 1.6;
+  text-align: center; letter-spacing: .3px;
+}
+.game-dialog-actions {
+  display: flex; gap: 12px; width: 100%; justify-content: center;
+}
+.game-dialog-btn {
+  flex: 1; max-width: 130px;
+  border: none; border-radius: 24px;
+  padding: 11px 0; font-size: 15px; font-weight: 600;
+  cursor: pointer; letter-spacing: .5px;
+  transition: opacity .15s, transform .1s;
+}
+.game-dialog-btn.confirm {
+  background: linear-gradient(135deg, #0ec4b0, #09a090);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(14,196,176,.4);
+}
+.game-dialog-btn.cancel {
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.7);
+  border: 1px solid rgba(255,255,255,.15);
+}
+.game-dialog-btn:active { opacity: .8; transform: scale(.96); }
+.dialog-fade-enter-active { animation: dialogIn .2s ease; }
+.dialog-fade-leave-active { animation: dialogIn .15s ease reverse; }
+@keyframes dialogIn {
+  from { opacity: 0; transform: scale(.9); }
+  to   { opacity: 1; transform: scale(1); }
 }
 .disconnected-bar {
   position: fixed; top: 48px; left: 0; right: 0;
