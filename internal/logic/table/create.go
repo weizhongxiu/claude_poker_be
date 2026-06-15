@@ -15,7 +15,7 @@ import (
 // CreateTable creates a new table and returns its ID and table number.
 func CreateTable(ctx context.Context, creatorID int64, req *v1.CreateTableReq) (tableID int64, tableNo string, err error) {
 	// Generate unique table number
-	tableNo = fmt.Sprintf("T%d", time.Now().UnixMilli()%1000000000)
+	tableNo = fmt.Sprintf("%06d", time.Now().UnixMilli()%1000000)
 
 	data := g.Map{
 		"table_no":            tableNo,
@@ -108,6 +108,7 @@ func StartSession(ctx context.Context, tableID, creatorID int64) (sessionID int6
 		"small_blind":  table.SmallBlind,
 		"big_blind":    table.BigBlind,
 		"player_count": count,
+		"duration":     table.Duration, // planned duration in hours (for expiry check)
 		"status":       1,
 		"started_at":   time.Now(),
 	}).Insert()
@@ -122,7 +123,85 @@ func StartSession(ctx context.Context, tableID, creatorID int64) (sessionID int6
 
 	// Update table status
 	_, _ = g.DB().Model("tables").Where("id", tableID).Update(g.Map{"status": 2})
+
+	// Create session_players records for all seated players
+	type seatRow struct {
+		UserID int64 `orm:"user_id"`
+		SeatNo int   `orm:"seat_no"`
+		Chips  int64 `orm:"chips"`
+	}
+	var seatedPlayers []*seatRow
+	if e2 := g.DB().Model("table_seats").Fields("user_id,seat_no,chips").
+		Where("table_id", tableID).Where("status", 1).Scan(&seatedPlayers); e2 == nil {
+		for _, sp := range seatedPlayers {
+			// Get total buyin for this player
+			buyinVal, _ := g.DB().Model("buyin_records").
+				Fields("COALESCE(SUM(amount),0)").
+				Where("user_id", sp.UserID).Where("status", 2).Value()
+			_, _ = g.DB().Model("session_players").Data(g.Map{
+				"session_id":  sessionID,
+				"user_id":     sp.UserID,
+				"seat_no":     sp.SeatNo,
+				"total_buyin": buyinVal.Int64(),
+				"chips_final": buyinVal.Int64(),
+				"total_hands": 0,
+				"result":      0,
+			}).Insert()
+		}
+	}
 	return
+}
+
+// TableSeatRow holds per-seat display info.
+type TableSeatRow struct {
+	SeatNo   int    `orm:"seat_no"   json:"seat_no"`
+	UserID   int64  `orm:"user_id"   json:"user_id"`
+	Nickname string `orm:"nickname"  json:"nickname"`
+	Avatar   string `orm:"avatar"    json:"avatar"`
+	Chips    int64  `orm:"chips"     json:"chips"`
+}
+
+// TableInfoResult bundles everything the table-info endpoint needs.
+type TableInfoResult struct {
+	Table         *entity.Tables
+	Seats         []*TableSeatRow
+	SessionID     int64
+	StartedAt     string
+	SessionStatus int // 0=none, 1=running, 2=ended
+}
+
+// TableInfo returns table config + active seats with user info.
+func TableInfo(ctx context.Context, tableID int64) (*TableInfoResult, error) {
+	table, err := GetTable(ctx, tableID)
+	if err != nil {
+		return nil, err
+	}
+
+	var seats []*TableSeatRow
+	_ = g.DB().Model("table_seats ts").
+		LeftJoin("users u", "u.id = ts.user_id").
+		Fields("ts.seat_no, ts.user_id, u.nickname, u.avatar, ts.chips").
+		Where("ts.table_id", tableID).Where("ts.status", 1).
+		Scan(&seats)
+
+	var sessionID int64
+	var startedAt string
+	var sessionStatus int
+	type sessionRow struct {
+		ID        int64  `orm:"id"`
+		StartedAt string `orm:"started_at"`
+		Status    int    `orm:"status"`
+	}
+	var sess sessionRow
+	_ = g.DB().Model("room_sessions").Fields("id,started_at,status").
+		Where("table_id", tableID).WhereIn("status", g.Slice{1, 2}).OrderDesc("id").Scan(&sess)
+	if sess.ID > 0 {
+		sessionID = sess.ID
+		startedAt = sess.StartedAt
+		sessionStatus = sess.Status
+	}
+
+	return &TableInfoResult{Table: table, Seats: seats, SessionID: sessionID, StartedAt: startedAt, SessionStatus: sessionStatus}, nil
 }
 
 // LobbyTables returns public table list.

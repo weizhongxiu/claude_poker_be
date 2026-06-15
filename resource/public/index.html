@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>德州扑克</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
+
+/* Auth */
+#auth-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 16px; }
+#auth-screen h1 { font-size: 2.5rem; color: #f4c430; margin-bottom: 8px; }
+.auth-box { background: #16213e; border-radius: 12px; padding: 32px; width: 360px; display: flex; flex-direction: column; gap: 12px; }
+.auth-box input { padding: 10px 14px; border-radius: 8px; border: 1px solid #334; background: #0f3460; color: #eee; font-size: 1rem; }
+.auth-tabs { display: flex; gap: 8px; margin-bottom: 4px; }
+.tab-btn { flex: 1; padding: 8px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.9rem; background: #0f3460; color: #aaa; }
+.tab-btn.active { background: #f4c430; color: #1a1a2e; font-weight: bold; }
+.btn { padding: 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 1rem; font-weight: bold; width: 100%; }
+.btn-primary { background: #f4c430; color: #1a1a2e; }
+.btn-primary:hover { background: #e6b820; }
+.btn-danger { background: #e74c3c; color: #fff; }
+.btn-danger:hover { background: #c0392b; }
+.btn-success { background: #2ecc71; color: #1a1a2e; }
+.btn-success:hover { background: #27ae60; }
+.btn-info { background: #3498db; color: #fff; }
+.btn-info:hover { background: #2980b9; }
+.btn-sm { padding: 6px 14px; font-size: 0.85rem; width: auto; }
+.msg { font-size: 0.85rem; color: #e74c3c; text-align: center; min-height: 18px; }
+
+/* Lobby */
+#lobby-screen { display: none; flex-direction: column; height: 100vh; }
+.top-bar { background: #16213e; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+.top-bar h2 { color: #f4c430; flex: 1; }
+.user-info { font-size: 0.9rem; color: #aaa; }
+.lobby-body { flex: 1; padding: 24px; overflow-y: auto; }
+.lobby-body h3 { color: #f4c430; margin-bottom: 16px; }
+.table-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.table-card { background: #16213e; border-radius: 12px; padding: 20px; cursor: pointer; border: 2px solid transparent; transition: border-color 0.2s; }
+.table-card:hover { border-color: #f4c430; }
+.table-card h4 { margin-bottom: 8px; }
+.table-card .meta { font-size: 0.8rem; color: #aaa; }
+.create-form { background: #16213e; border-radius: 12px; padding: 24px; margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.create-form label { font-size: 0.8rem; color: #aaa; display: flex; flex-direction: column; gap: 4px; }
+.create-form input { padding: 8px 12px; border-radius: 6px; border: 1px solid #334; background: #0f3460; color: #eee; width: 140px; }
+
+/* Game Table */
+#game-screen { display: none; flex-direction: column; height: 100vh; }
+.game-header { background: #16213e; padding: 10px 20px; display: flex; align-items: center; gap: 16px; }
+.game-header h3 { color: #f4c430; flex: 1; }
+.game-info { font-size: 0.85rem; color: #aaa; }
+
+.poker-table-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.poker-table { position: relative; width: 700px; height: 380px; background: radial-gradient(ellipse at center, #2d7a3a 60%, #1e5a28); border-radius: 50%; border: 12px solid #7a4e2d; box-shadow: 0 0 40px rgba(0,0,0,0.6); }
+
+/* Community cards */
+.community-area { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -60%); display: flex; gap: 8px; align-items: center; }
+.pot-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, 10px); font-size: 1rem; color: #f4c430; font-weight: bold; white-space: nowrap; }
+.stage-display { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #ccc; background: rgba(0,0,0,0.4); padding: 2px 10px; border-radius: 10px; }
+
+/* Seats */
+.seat { position: absolute; width: 120px; text-align: center; transform: translate(-50%, -50%); }
+.seat[data-pos="1"] { left: 20%; top: 75%; }
+.seat[data-pos="2"] { left: 80%; top: 75%; }
+.seat[data-pos="3"] { left: 5%; top: 50%; }
+.seat[data-pos="4"] { left: 95%; top: 50%; }
+.seat[data-pos="5"] { left: 20%; top: 25%; }
+.seat[data-pos="6"] { left: 80%; top: 25%; }
+.seat[data-pos="7"] { left: 35%; top: 10%; }
+.seat[data-pos="8"] { left: 65%; top: 10%; }
+.seat[data-pos="9"] { left: 50%; top: 5%; }
+
+.seat-avatar { width: 48px; height: 48px; border-radius: 50%; background: #0f3460; margin: 0 auto 4px; border: 3px solid #334; overflow: hidden; }
+.seat-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.seat.active .seat-avatar { border-color: #f4c430; box-shadow: 0 0 12px #f4c430; }
+.seat.my-seat .seat-avatar { border-color: #2ecc71; }
+.seat-name { font-size: 0.75rem; color: #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat-chips { font-size: 0.7rem; color: #f4c430; }
+.seat-bet { font-size: 0.7rem; color: #aaa; }
+.seat-cards { display: flex; gap: 3px; justify-content: center; margin-top: 3px; }
+.seat-status { font-size: 0.65rem; color: #e74c3c; }
+.dealer-btn { display: inline-block; background: #f4c430; color: #1a1a2e; border-radius: 50%; width: 18px; height: 18px; font-size: 0.6rem; font-weight: bold; line-height: 18px; margin-left: 4px; }
+
+/* Playing cards */
+.card { width: 36px; height: 52px; border-radius: 5px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; border: 1px solid #bbb; user-select: none; }
+.card.back { background: linear-gradient(135deg, #1a237e, #283593); border-color: #1a237e; }
+.card.red { color: #d32f2f; }
+.card.black { color: #212121; }
+.card-community { width: 44px; height: 62px; font-size: 0.9rem; }
+.card-empty { background: rgba(255,255,255,0.1); border: 1px dashed rgba(255,255,255,0.3); }
+
+/* Action bar */
+.action-bar { background: #16213e; padding: 14px 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.action-bar .timer { font-size: 0.9rem; color: #aaa; margin-right: auto; }
+.raise-input { padding: 8px 12px; border-radius: 6px; border: 1px solid #334; background: #0f3460; color: #eee; width: 120px; font-size: 0.9rem; }
+#action-bar-msg { font-size: 0.85rem; color: #aaa; }
+
+/* Chat & log */
+.side-panel { width: 280px; background: #16213e; display: flex; flex-direction: column; }
+.log-area { flex: 1; overflow-y: auto; padding: 12px; font-size: 0.78rem; color: #aaa; }
+.log-area .log-entry { margin-bottom: 4px; border-bottom: 1px solid #1e2d4a; padding-bottom: 4px; }
+.log-area .log-entry.result { color: #f4c430; }
+.log-area .log-entry.action { color: #2ecc71; }
+.log-area .log-entry.system { color: #3498db; }
+.chat-input-area { padding: 10px; border-top: 1px solid #1e2d4a; display: flex; gap: 6px; }
+.chat-input-area input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #334; background: #0f3460; color: #eee; font-size: 0.85rem; }
+
+.game-main { display: flex; flex: 1; overflow: hidden; }
+
+/* Seat join modal */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+.modal-overlay.show { display: flex; }
+.modal { background: #16213e; border-radius: 12px; padding: 28px; width: 320px; display: flex; flex-direction: column; gap: 14px; }
+.modal h3 { color: #f4c430; }
+.modal input { padding: 10px 14px; border-radius: 8px; border: 1px solid #334; background: #0f3460; color: #eee; font-size: 1rem; }
+
+/* Countdown ring */
+.countdown { position: absolute; right: 4px; top: 4px; font-size: 1.1rem; color: #f4c430; font-weight: bold; }
+
+/* Chip bet badge — shown between seat and pot */
+.seat-chip-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(0,0,0,0.65);
+  border: 1px solid #f4c430;
+  border-radius: 12px;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: bold;
+  color: #f4c430;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+  transition: opacity 0.3s;
+}
+.seat-chip-badge .chip-icon { font-size: 0.85rem; }
+
+/* Flying chip animation */
+.flying-chip {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffe066, #f4c430 60%, #b8860b);
+  border: 2px solid #fff8dc;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: bold;
+  color: #7a4e2d;
+  pointer-events: none;
+  z-index: 50;
+  transition: left 0.5s cubic-bezier(0.4,0,0.2,1), top 0.5s cubic-bezier(0.4,0,0.2,1), opacity 0.5s;
+}
+
+/* Win burst animation */
+@keyframes winBurst {
+  0%   { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+  60%  { transform: translate(-50%,-50%) scale(1.5); opacity: 0.9; }
+  100% { transform: translate(-50%,-50%) scale(0.8); opacity: 0; }
+}
+.win-burst {
+  position: absolute;
+  pointer-events: none;
+  z-index: 60;
+  font-size: 1.4rem;
+  animation: winBurst 0.8s ease-out forwards;
+  transform: translate(-50%,-50%);
+}
+
+@keyframes chipToWinner {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- Auth Screen -->
+<div id="auth-screen">
+  <h1>♠ 德州扑克 ♥</h1>
+  <div class="auth-box">
+    <div class="auth-tabs">
+      <button class="tab-btn active" onclick="showTab('login')">登录</button>
+      <button class="tab-btn" onclick="showTab('register')">注册</button>
+    </div>
+    <div id="login-form">
+      <input id="login-phone" type="text" placeholder="手机号" value="13812345601">
+      <input id="login-pass" type="password" placeholder="密码" value="pass123456">
+      <button class="btn btn-primary" onclick="doLogin()">登录</button>
+    </div>
+    <div id="register-form" style="display:none">
+      <input id="reg-phone" type="text" placeholder="手机号（11位）">
+      <input id="reg-pass" type="password" placeholder="密码（6位以上）">
+      <input id="reg-nick" type="text" placeholder="昵称">
+      <button class="btn btn-primary" onclick="doRegister()">注册</button>
+    </div>
+    <div class="msg" id="auth-msg"></div>
+  </div>
+</div>
+
+<!-- Lobby Screen -->
+<div id="lobby-screen">
+  <div class="top-bar">
+    <h2>♠ 德州扑克大厅</h2>
+    <span class="user-info" id="user-info"></span>
+    <button class="btn btn-danger btn-sm" onclick="logout()">退出</button>
+  </div>
+  <div class="lobby-body">
+    <h3>创建牌桌</h3>
+    <div class="create-form">
+      <label>桌名 <input id="cf-name" value="测试桌" style="width:120px"></label>
+      <label>小盲 <input id="cf-sb" type="number" value="10" style="width:80px"></label>
+      <label>大盲 <input id="cf-bb" type="number" value="20" style="width:80px"></label>
+      <label>最小买入 <input id="cf-min" type="number" value="200" style="width:90px"></label>
+      <label>最大买入 <input id="cf-max" type="number" value="2000" style="width:90px"></label>
+      <label>最多座位 <input id="cf-seats" type="number" value="6" min="2" max="9" style="width:70px"></label>
+      <button class="btn btn-primary btn-sm" onclick="createTable()">创建</button>
+    </div>
+    <h3>可加入的牌桌 <button class="btn btn-info btn-sm" style="margin-left:12px" onclick="loadTables()">刷新</button></h3>
+    <div class="table-grid" id="table-grid"></div>
+  </div>
+</div>
+
+<!-- Game Screen -->
+<div id="game-screen">
+  <div class="game-header">
+    <h3 id="game-title">牌桌</h3>
+    <span class="game-info" id="game-info"></span>
+    <button class="btn btn-info btn-sm" onclick="startSession()" id="btn-start">开局</button>
+    <button class="btn btn-danger btn-sm" onclick="leaveTable()">离开</button>
+  </div>
+  <div class="game-main">
+    <div style="flex:1;display:flex;flex-direction:column">
+      <div class="poker-table-wrap">
+        <div class="poker-table" id="poker-table">
+          <div class="stage-display" id="stage-display">等待开局</div>
+          <div class="community-area" id="community-area"></div>
+          <div class="pot-display" id="pot-display"></div>
+          <!-- seats filled by JS -->
+        </div>
+      </div>
+      <div class="action-bar" id="action-bar">
+        <span class="timer" id="timer-display"></span>
+        <span id="action-bar-msg">等待游戏开始</span>
+      </div>
+    </div>
+    <div class="side-panel">
+      <div class="log-area" id="log-area"></div>
+      <div class="chat-input-area">
+        <input id="chat-input" placeholder="发送消息..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-info btn-sm" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Seat Modal -->
+<div class="modal-overlay" id="seat-modal">
+  <div class="modal">
+    <h3>选择座位</h3>
+    <p style="color:#aaa;font-size:0.85rem">座位号: <span id="modal-seat-no"></span></p>
+    <input id="modal-buyin" type="number" placeholder="买入金额" value="500">
+    <button class="btn btn-primary" onclick="confirmSeat()">确认入座</button>
+    <button class="btn" style="background:#334;color:#eee" onclick="closeSeatModal()">取消</button>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+let token = localStorage.getItem('poker_token') || '';
+let myUserID = +localStorage.getItem('poker_uid') || 0;
+let myNick = localStorage.getItem('poker_nick') || '';
+let currentTableID = 0;
+let currentSessionID = 0;
+let ws = null;
+let timerInterval = null;
+let gameState = null;
+let pendingSeatNo = 0;
+const STREETS = {1:'翻前',2:'翻牌',3:'转牌',4:'河牌',5:'摊牌'};
+const ACTION_NAMES = {1:'弃牌',2:'过牌',3:'跟注',4:'加注',5:'下注',6:'全押'};
+const SUITS = {'s':'♠','h':'♥','d':'♦','c':'♣'};
+const SUIT_COLOR = {'s':'black','h':'red','d':'red','c':'black'};
+
+// ─── Auth ─────────────────────────────────────────────
+function showTab(t) {
+  document.getElementById('login-form').style.display = t==='login'?'':'none';
+  document.getElementById('register-form').style.display = t==='register'?'':'none';
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',(t==='login'&&i===0)||(t==='register'&&i===1)));
+}
+
+async function doLogin() {
+  const phone = document.getElementById('login-phone').value;
+  const password = document.getElementById('login-pass').value;
+  const r = await api('POST','/user/login',{phone,password});
+  if(r.code===0){saveSession(r.data.token,r.data.user_id,r.data.nickname);showLobby();}
+  else setMsg('auth-msg',r.message);
+}
+
+async function doRegister() {
+  const phone = document.getElementById('reg-phone').value;
+  const password = document.getElementById('reg-pass').value;
+  const nickname = document.getElementById('reg-nick').value;
+  const r = await api('POST','/user/register',{phone,password,nickname});
+  if(r.code===0){saveSession(r.data.token,r.data.user_id,nickname);showLobby();}
+  else setMsg('auth-msg',r.message);
+}
+
+function saveSession(t,uid,nick){
+  token=t; myUserID=uid; myNick=nick;
+  localStorage.setItem('poker_token',t);
+  localStorage.setItem('poker_uid',uid);
+  localStorage.setItem('poker_nick',nick);
+}
+function logout(){token='';myUserID=0;localStorage.clear();location.reload();}
+
+// ─── Lobby ────────────────────────────────────────────
+async function showLobby() {
+  show('lobby-screen');
+  document.getElementById('user-info').textContent = `${myNick} (ID:${myUserID})`;
+  loadTables();
+}
+
+async function loadTables() {
+  const r = await api('GET','/lobby/tables');
+  const grid = document.getElementById('table-grid');
+  grid.innerHTML='';
+  const tables = (r.data?.list || r.data || []);
+  if(!tables.length){grid.innerHTML='<p style="color:#666">暂无牌桌，请创建一个</p>';return;}
+  tables.forEach(t=>{
+    const card = document.createElement('div');
+    card.className='table-card';
+    card.innerHTML=`<h4>${t.name}</h4><div class="meta">盲注: ${t.small_blind}/${t.big_blind} | 买入: ${t.min_buyin}~${t.max_buyin}<br>人数: ${t.player_count||0}/${t.max_seats} | 状态: ${t.status===1?'等待开局':'进行中'}</div>`;
+    card.onclick=()=>joinTable(t.table_id||t.id);
+    grid.appendChild(card);
+  });
+}
+
+async function createTable() {
+  const r = await api('POST','/table/create',{
+    name: document.getElementById('cf-name').value,
+    game_type: 1,
+    small_blind: +document.getElementById('cf-sb').value,
+    big_blind: +document.getElementById('cf-bb').value,
+    min_buyin: +document.getElementById('cf-min').value,
+    max_buyin: +document.getElementById('cf-max').value,
+    max_seats: +document.getElementById('cf-seats').value,
+  });
+  if(r.code===0){joinTable(r.data.table_id);}
+  else alert(r.message);
+}
+
+async function joinTable(tableID) {
+  const r = await api('POST','/table/join',{table_id:tableID});
+  if(r.code===0||r.message?.includes('已加入')||r.message?.includes('already')) {
+    currentTableID = tableID;
+    await loadGameScreen(tableID);
+  } else alert(r.message);
+}
+
+// ─── Game Screen ───────────────────────────────────────
+async function loadGameScreen(tableID) {
+  const r = await api('GET',`/table/${tableID}/info`);
+  if(r.code!==0){alert(r.message);return;}
+  const t = r.data;
+  document.getElementById('game-title').textContent=`${t.name} | 盲注 ${t.small_blind}/${t.big_blind}`;
+  document.getElementById('game-info').textContent=`桌号: ${t.table_no}`;
+  currentSessionID = t.session_id||0;
+  const canStart = t.status===1;
+  document.getElementById('btn-start').style.display = canStart?'':'none';
+  show('game-screen');
+  renderEmptySeats(t.max_seats||6, t.seats||[]);
+  connectWS(tableID);
+}
+
+function renderEmptySeats(maxSeats, seats=[]) {
+  const table = document.getElementById('poker-table');
+  // remove old seats
+  table.querySelectorAll('.seat').forEach(s=>s.remove());
+  for(let i=1;i<=maxSeats;i++){
+    const existing = seats.find(s=>s.seat_no===i);
+    addSeatEl(i, existing);
+  }
+}
+
+function addSeatEl(seatNo, player=null) {
+  const el = document.createElement('div');
+  el.className='seat';
+  el.dataset.pos=seatNo;
+  el.dataset.seat=seatNo;
+  el.id=`seat-${seatNo}`;
+  updateSeatEl(el, seatNo, player);
+  document.getElementById('poker-table').appendChild(el);
+}
+
+function updateSeatEl(el, seatNo, player) {
+  const isMe = player && player.user_id===myUserID;
+  const isEmpty = !player;
+  el.className=`seat${isMe?' my-seat':''}`;
+  el.dataset.pos=seatNo;
+  if(isEmpty){
+    el.innerHTML=`<div class="seat-avatar" style="background:#0a1a2a;border-style:dashed;cursor:pointer" onclick="openSeatModal(${seatNo})">
+      <div style="line-height:48px;text-align:center;color:#446;font-size:1.2rem">+</div></div>
+      <div class="seat-name" style="color:#446;cursor:pointer" onclick="openSeatModal(${seatNo})">点击入座</div>`;
+  } else {
+    const statusTxt = player.status===2?'全押':player.status===3?'弃牌':player.status===4?'离线':'';
+    el.innerHTML=`<div class="seat-avatar${isMe?' my-seat':''}">
+        <img src="${player.avatar||''}" onerror="this.style.display='none'">
+      </div>
+      <div class="seat-name">${player.nickname||'玩家'}${isMe?' ★':''}</div>
+      <div class="seat-chips">筹码: ${player.chips||0}</div>
+      <div class="seat-bet" id="seat-bet-${seatNo}">${player.bet>0?'下注: '+player.bet:''}</div>
+      <div class="seat-cards" id="seat-cards-${seatNo}"></div>
+      <div class="seat-status">${statusTxt}</div>`;
+  }
+}
+
+function openSeatModal(seatNo) {
+  pendingSeatNo = seatNo;
+  document.getElementById('modal-seat-no').textContent = seatNo;
+  document.getElementById('seat-modal').classList.add('show');
+}
+function closeSeatModal(){document.getElementById('seat-modal').classList.remove('show');}
+async function confirmSeat() {
+  const buyin = +document.getElementById('modal-buyin').value;
+  const r = await api('POST','/table/seat/take',{table_id:currentTableID,seat_no:pendingSeatNo,buyin});
+  if(r.code===0){closeSeatModal();addLog(`入座第 ${pendingSeatNo} 号位，买入 ${buyin} 筹码`,'system');}
+  else alert(r.message);
+}
+
+async function startSession() {
+  const r = await api('POST','/table/start',{table_id:currentTableID});
+  if(r.code===0){
+    currentSessionID = r.data.session_id;
+    document.getElementById('btn-start').style.display='none';
+    addLog('游戏开始！','system');
+  } else alert(r.message);
+}
+
+async function leaveTable() {
+  await api('POST','/table/seat/leave',{table_id:currentTableID});
+  if(ws){ws.close();ws=null;}
+  clearInterval(timerInterval);
+  currentTableID=0;
+  show('lobby-screen');
+  loadTables();
+}
+
+// ─── WebSocket ─────────────────────────────────────────
+function connectWS(tableID) {
+  if(ws){ws.close();}
+  ws = new WebSocket(`ws://localhost:8000/ws/table/${tableID}?token=${token}`);
+  ws.onopen=()=>addLog('已连接到牌桌','system');
+  ws.onclose=()=>addLog('连接断开','system');
+  ws.onerror=()=>addLog('连接错误','system');
+  ws.onmessage=e=>{
+    try{handleWS(JSON.parse(e.data));}catch(err){console.error(err);}
+  };
+}
+
+function handleWS(msg) {
+  const {type, data} = msg;
+  switch(type) {
+    case 'game_state': onGameState(data); break;
+    case 'deal': onDeal(data); break;
+    case 'action_result': onActionResult(data); break;
+    case 'hand_result': onHandResult(data); break;
+    case 'session_end': addLog('本局结束','system'); break;
+    case 'chat': addLog(`💬 ${data.nickname}: ${data.content}`,''); break;
+    case 'error': addLog(`错误: ${data.msg||JSON.stringify(data)}`,'system'); break;
+    case 'pong': break;
+    default: console.log('ws:',type,data);
+  }
+}
+
+function onGameState(s) {
+  gameState = s;
+  const stage = STREETS[s.stage]||'翻前';
+  document.getElementById('stage-display').textContent = `第 ${s.hand_index} 手 | ${stage}`;
+  document.getElementById('pot-display').textContent = s.pot>0?`底池: ${s.pot}`:'';
+
+  // Community cards
+  const ca = document.getElementById('community-area');
+  ca.innerHTML='';
+  const toShow = s.community_cards||[];
+  for(let i=0;i<5;i++){
+    ca.appendChild(i<toShow.length ? renderCard(toShow[i]) : renderCardBack(true));
+  }
+
+  // Players / seats
+  (s.players||[]).forEach(p=>{
+    const el = document.getElementById(`seat-${p.seat}`);
+    if(el) updateSeatEl(el, p.seat, {...p, user_id: p.user_id||guessUID(p)});
+    const betEl = document.getElementById(`seat-bet-${p.seat}`);
+    if(betEl) betEl.textContent = p.bet>0?`下注: ${p.bet}`:'';
+    if(el) el.classList.toggle('active', p.seat===s.current_seat);
+    // Update chip badge (bet amount near avatar)
+    updateChipBadge(p.seat, p.bet||0);
+  });
+
+  // Action bar
+  const mySeat = (s.players||[]).find(p=>p.nickname===myNick);
+  const isMyTurn = mySeat && s.current_seat===mySeat.seat;
+  renderActionBar(s, mySeat, isMyTurn);
+
+  // Timer
+  clearInterval(timerInterval);
+  if(s.deadline) startTimer(s.deadline);
+}
+
+function guessUID(p){return p.nickname===myNick?myUserID:0;}
+
+function onDeal(d) {
+  const cards = d.hole_cards||[];
+  // find my seat
+  const mySeat = gameState && (gameState.players||[]).find(p=>p.nickname===myNick);
+  if(!mySeat) return;
+  const cardsEl = document.getElementById(`seat-cards-${mySeat.seat}`);
+  if(cardsEl){cardsEl.innerHTML='';cards.forEach(c=>cardsEl.appendChild(renderCard(c,true)));}
+  addLog(`发牌: ${cards.join(' ')}`, 'action');
+}
+
+function onActionResult(d) {
+  const name = ACTION_NAMES[d.action]||d.action;
+  addLog(`座位 ${d.seat}: ${name}${d.amount>0?' '+d.amount:''}`, 'action');
+  // Animate chip flying to pot for bet/call/raise/allin actions
+  if(d.amount>0 && [3,4,5,6].includes(d.action)) {
+    animateChipToPot(d.seat, d.amount);
+  }
+}
+
+function onHandResult(d) {
+  clearInterval(timerInterval);
+  document.getElementById('action-bar').innerHTML='<span id="action-bar-msg" style="color:#f4c430">等待下一手...</span>';
+  let msg = `手牌结束 | `;
+  (d.pots||[]).forEach(pot=>{
+    (pot.winners||[]).forEach(w=>{
+      msg += `赢家 UID:${w.user_id} 赢得 ${w.amount} 筹码 (${w.hand_desc})`;
+      // Find winner's seat and animate chips flying to them
+      if(gameState) {
+        const wp = (gameState.players||[]).find(p=>p.user_id===w.user_id||p.nickname===w.nickname);
+        if(wp) animateChipToWinner(wp.seat);
+      }
+    });
+  });
+  addLog(msg,'result');
+  // Reset after 3s
+  setTimeout(()=>{
+    document.querySelectorAll('[id^="seat-cards-"]').forEach(el=>el.innerHTML='');
+    document.getElementById('community-area').innerHTML='';
+    document.getElementById('pot-display').textContent='';
+    document.getElementById('stage-display').textContent='等待下一手';
+    clearAllChipBadges();
+  },3000);
+}
+
+function renderActionBar(s, mySeat, isMyTurn) {
+  const bar = document.getElementById('action-bar');
+  if(!isMyTurn || !mySeat){
+    const cur = (s.players||[]).find(p=>p.seat===s.current_seat);
+    bar.innerHTML=`<span class="timer" id="timer-display"></span><span id="action-bar-msg">等待 ${cur?cur.nickname:'对手'} 行动...</span>`;
+    return;
+  }
+  const maxBet = Math.max(...(s.players||[]).map(p=>p.bet||0));
+  const myBet = mySeat.bet||0;
+  const callAmt = maxBet - myBet;
+  const gameID = s.game_id;
+  let html=`<span class="timer" id="timer-display"></span>`;
+  html+=`<button class="btn btn-danger btn-sm" onclick="sendAction(${gameID},1,0)">弃牌</button>`;
+  if(callAmt<=0){
+    html+=`<button class="btn btn-success btn-sm" onclick="sendAction(${gameID},2,0)">过牌</button>`;
+  } else {
+    html+=`<button class="btn btn-info btn-sm" onclick="sendAction(${gameID},3,${callAmt})">跟注 ${callAmt}</button>`;
+  }
+  html+=`<input class="raise-input" id="raise-amt" type="number" value="${maxBet*2}" min="${maxBet+1}" step="${s.big_blind}">`;
+  if(callAmt<=0){
+    html+=`<button class="btn btn-primary btn-sm" onclick="sendAction(${gameID},5,+document.getElementById('raise-amt').value)">下注</button>`;
+  } else {
+    html+=`<button class="btn btn-primary btn-sm" onclick="sendAction(${gameID},4,+document.getElementById('raise-amt').value)">加注</button>`;
+  }
+  html+=`<button class="btn btn-sm" style="background:#7d3c98;color:#fff" onclick="sendAction(${gameID},6,${mySeat.chips+myBet})">全押</button>`;
+  bar.innerHTML=html;
+  if(s.deadline) startTimer(s.deadline);
+}
+
+function sendAction(gameID, action, amount) {
+  if(!ws||ws.readyState!==1){alert('未连接');return;}
+  ws.send(JSON.stringify({type:'action',data:{game_id:gameID,action,amount}}));
+  addLog(`我: ${ACTION_NAMES[action]||action}${amount>0?' '+amount:''}`, 'action');
+}
+
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  if(!input.value.trim()||!ws||ws.readyState!==1)return;
+  ws.send(JSON.stringify({type:'chat',data:{session_id:currentSessionID,msg_type:1,content:input.value.trim()}}));
+  input.value='';
+}
+
+function startTimer(deadline) {
+  clearInterval(timerInterval);
+  timerInterval = setInterval(()=>{
+    const left = Math.max(0, Math.round((deadline - Date.now())/1000));
+    const el = document.getElementById('timer-display');
+    if(el) el.textContent = left>0?`⏱ ${left}s`:'';
+    if(left<=0) clearInterval(timerInterval);
+  },500);
+}
+
+// ─── Card rendering ────────────────────────────────────
+function renderCard(code, small=false) {
+  if(!code){return renderCardBack(false,small);}
+  const suit = code.slice(-1);
+  const rank = code.slice(0,-1);
+  const div = document.createElement('div');
+  div.className=`card ${SUIT_COLOR[suit]||'black'}${small?'':' card-community'}`;
+  div.innerHTML=`${rank}${SUITS[suit]||suit}`;
+  return div;
+}
+function renderCardBack(community=false, small=false) {
+  const div = document.createElement('div');
+  div.className=`card back${community?' card-community':''}`;
+  if(community) div.classList.add('card-empty');
+  return div;
+}
+
+// ─── Utilities ─────────────────────────────────────────
+function show(id) {
+  ['auth-screen','lobby-screen','game-screen'].forEach(s=>{
+    document.getElementById(s).style.display = s===id ? (s==='auth-screen'?'flex':'flex') : 'none';
+  });
+}
+
+function addLog(msg, cls='') {
+  const area = document.getElementById('log-area');
+  const div = document.createElement('div');
+  div.className=`log-entry ${cls}`;
+  div.textContent=`${new Date().toLocaleTimeString()} ${msg}`;
+  area.appendChild(div);
+  area.scrollTop=area.scrollHeight;
+}
+
+function setMsg(id,msg){document.getElementById(id).textContent=msg;}
+
+async function api(method, path, body) {
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(token) opts.headers['Authorization'] = token;
+  if(body) opts.body = JSON.stringify(body);
+  try {
+    const r = await fetch(API+path, opts);
+    return await r.json();
+  } catch(e) {
+    return {code:-1, message: e.message};
+  }
+}
+
+// ─── Chip positions (between seat and pot center) ──────
+// Each entry: {left%, top%} — midpoint between seat and table center
+const CHIP_BADGE_POS = {
+  1: {left:32, top:67},
+  2: {left:68, top:67},
+  3: {left:18, top:52},
+  4: {left:82, top:52},
+  5: {left:32, top:33},
+  6: {left:68, top:33},
+  7: {left:40, top:22},
+  8: {left:60, top:22},
+  9: {left:50, top:18},
+};
+
+// Seat absolute pixel center (relative to poker-table element)
+function seatPixelCenter(seatNo) {
+  const tbl = document.getElementById('poker-table');
+  const w = tbl.offsetWidth, h = tbl.offsetHeight;
+  const pos = {
+    1:{l:0.20,t:0.75}, 2:{l:0.80,t:0.75},
+    3:{l:0.05,t:0.50}, 4:{l:0.95,t:0.50},
+    5:{l:0.20,t:0.25}, 6:{l:0.80,t:0.25},
+    7:{l:0.35,t:0.10}, 8:{l:0.65,t:0.10},
+    9:{l:0.50,t:0.05},
+  }[seatNo] || {l:0.5,t:0.5};
+  return {x: pos.l*w, y: pos.t*h};
+}
+
+function potPixelCenter() {
+  const tbl = document.getElementById('poker-table');
+  return {x: tbl.offsetWidth*0.5, y: tbl.offsetHeight*0.5};
+}
+
+// Animate a chip flying from seat → pot center
+function animateChipToPot(seatNo, amount) {
+  const tbl = document.getElementById('poker-table');
+  const from = seatPixelCenter(seatNo);
+  const to   = potPixelCenter();
+
+  const chip = document.createElement('div');
+  chip.className = 'flying-chip';
+  chip.textContent = amount >= 1000 ? Math.round(amount/100)/10+'k' : amount;
+  chip.style.left = from.x + 'px';
+  chip.style.top  = from.y + 'px';
+  chip.style.opacity = '1';
+  chip.style.transform = 'translate(-50%,-50%)';
+  tbl.appendChild(chip);
+
+  // trigger transition next frame
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    chip.style.left = to.x + 'px';
+    chip.style.top  = to.y + 'px';
+    chip.style.opacity = '0';
+  }));
+  setTimeout(()=>chip.remove(), 600);
+}
+
+// Animate chips flying from pot → winner seat
+function animateChipToWinner(seatNo) {
+  const tbl = document.getElementById('poker-table');
+  const from = potPixelCenter();
+  const to   = seatPixelCenter(seatNo);
+
+  // spawn 5 chips with stagger
+  for(let i=0;i<5;i++){
+    setTimeout(()=>{
+      const chip = document.createElement('div');
+      chip.className = 'flying-chip';
+      chip.style.left = from.x + 'px';
+      chip.style.top  = from.y + 'px';
+      chip.style.opacity = '1';
+      chip.style.background = 'radial-gradient(circle at 35% 35%, #80ff80, #2ecc71 60%, #1a7a40)';
+      chip.style.transform = 'translate(-50%,-50%)';
+      tbl.appendChild(chip);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        chip.style.left = to.x + 'px';
+        chip.style.top  = to.y + 'px';
+        chip.style.opacity = '0';
+      }));
+      setTimeout(()=>chip.remove(), 650);
+    }, i*80);
+  }
+
+  // Win burst star at winner seat
+  const burst = document.createElement('div');
+  burst.className = 'win-burst';
+  burst.textContent = '🏆';
+  burst.style.left = to.x + 'px';
+  burst.style.top  = to.y + 'px';
+  tbl.appendChild(burst);
+  setTimeout(()=>burst.remove(), 900);
+}
+
+// Update (or create) the chip badge next to a seat
+function updateChipBadge(seatNo, betAmount) {
+  const tbl = document.getElementById('poker-table');
+  const id = `chip-badge-${seatNo}`;
+  let badge = document.getElementById(id);
+  if(betAmount <= 0) {
+    if(badge) badge.style.opacity = '0';
+    return;
+  }
+  if(!badge) {
+    badge = document.createElement('div');
+    badge.id = id;
+    badge.className = 'seat-chip-badge';
+    tbl.appendChild(badge);
+  }
+  const bp = CHIP_BADGE_POS[seatNo] || {left:50,top:50};
+  badge.style.left = bp.left + '%';
+  badge.style.top  = bp.top  + '%';
+  badge.style.opacity = '1';
+  badge.innerHTML = `<span class="chip-icon">🪙</span>${betAmount}`;
+}
+
+function clearAllChipBadges() {
+  document.querySelectorAll('.seat-chip-badge').forEach(b=>{b.style.opacity='0';});
+}
+
+// ─── Init ──────────────────────────────────────────────
+if(token) {
+  showLobby();
+} else {
+  show('auth-screen');
+}
+</script>
+</body>
+</html>

@@ -52,12 +52,21 @@ func StartGameEngine(ctx context.Context, sessionID int64) error {
 		OnAction:      onAction,
 		OnStageChange: onStageChange,
 		OnHandEnd:     makeOnHandEnd(sessionID),
+		OnDeal:        onDeal,
 	}
 
 	eng := game.GlobalEngine()
 	eng.StartTable(cfg, cb)
 
+	// Detect which seats are bots (phone prefix "bot_") and register them.
+	var botIDs []int64
 	for _, s := range seats {
+		type phoneRow struct{ Phone string `orm:"phone"` }
+		var pr phoneRow
+		_ = g.DB().Model("users").Fields("phone").Where("id", s.UserID).Scan(&pr)
+		if len(pr.Phone) > 4 && pr.Phone[:4] == "bot_" {
+			botIDs = append(botIDs, s.UserID)
+		}
 		_ = eng.AddPlayer(cfg.TableID, game.PlayerState{
 			UserID:   s.UserID,
 			Nickname: s.Nickname,
@@ -67,6 +76,13 @@ func StartGameEngine(ctx context.Context, sessionID int64) error {
 			Status:   game.PlayerActive,
 		})
 	}
+	if len(botIDs) > 0 {
+		RegisterBots(cfg.TableID, botIDs)
+	}
+
+	ws.GlobalHub().BroadcastTable(cfg.TableID, ws.MsgTypeSessionStarted, g.Map{
+		"session_id": sessionID,
+	})
 
 	return startNextHand(ctx, cfg.TableID, sessionID, 1)
 }
@@ -77,12 +93,33 @@ func startNextHand(ctx context.Context, tableID, sessionID int64, handIdx int) e
 	var session entity.RoomSessions
 	_ = g.DB().Model("room_sessions").Where("id", sessionID).Scan(&session)
 
+	// Check session duration (default 30 minutes if not configured).
+	if session.StartedAt != nil {
+		durationHours := session.Duration
+		if durationHours <= 0 {
+			durationHours = 0.5 // default 30 minutes
+		}
+		expireAt := session.StartedAt.Time.Add(time.Duration(float64(time.Hour) * durationHours))
+		g.Log().Infof(ctx, "[duration] session=%d startedAt=%v expireAt=%v now=%v durationH=%.2f",
+			sessionID, session.StartedAt.Time, expireAt, time.Now(), durationHours)
+		if time.Now().After(expireAt) {
+			g.Log().Infof(ctx, "[duration] session=%d EXPIRED, ending", sessionID)
+			go func() {
+				if e := EndSession(ctx, sessionID, 1); e != nil {
+					g.Log().Errorf(ctx, "EndSession (time expired) error: %v", e)
+				}
+			}()
+			return nil
+		}
+	}
+
 	result, e := g.DB().Model("games").Data(g.Map{
 		"table_id":    tableID,
 		"session_id":  sessionID,
 		"hand_no":     handNo,
 		"small_blind": session.SmallBlind,
 		"big_blind":   session.BigBlind,
+		"dealer_seat": 0,
 		"stage":       game.StageBlinds,
 		"status":      1,
 		"started_at":  time.Now(),
@@ -91,6 +128,24 @@ func startNextHand(ctx context.Context, tableID, sessionID int64, handIdx int) e
 		return e
 	}
 	gameID, _ := result.LastInsertId()
+
+	// Insert game_players rows for every active seat
+	type seatRow struct {
+		UserID int64 `orm:"user_id"`
+		SeatNo int   `orm:"seat_no"`
+		Chips  int64 `orm:"chips"`
+	}
+	var activeSeats []*seatRow
+	_ = g.DB().Model("table_seats").Fields("user_id,seat_no,chips").
+		Where("table_id", tableID).Where("status", 1).Scan(&activeSeats)
+	for _, s := range activeSeats {
+		_, _ = g.DB().Model("game_players").Data(g.Map{
+			"game_id":     gameID,
+			"user_id":     s.UserID,
+			"seat_no":     s.SeatNo,
+			"chips_start": s.Chips,
+		}).Insert()
+	}
 
 	return game.GlobalEngine().StartHand(tableID, gameID, handNo, handIdx)
 }
@@ -131,19 +186,27 @@ func settleSession(ctx context.Context, sessionID, tableID int64) error {
 		SeatNo     int   `orm:"seat_no"`
 		TotalBuyin int64 `orm:"total_buyin"`
 		TotalHands int   `orm:"total_hands"`
-		Chips      int64 `orm:"chips"`
+		ChipsFinal int64 `orm:"chips_final"` // updated after each hand
+		SeatChips  int64 `orm:"seat_chips"`  // current table seat chips (may be 0 if seat cleared)
 	}
 	var players []*playerRow
 	if e := g.DB().Model("session_players sp").
 		LeftJoin("table_seats ts", fmt.Sprintf("ts.user_id = sp.user_id AND ts.table_id = %d", tableID)).
-		Fields("sp.user_id, sp.total_buyin, sp.total_hands, ts.chips, ts.seat_no").
+		Fields("sp.user_id, sp.total_buyin, sp.total_hands, sp.chips_final, COALESCE(ts.chips,0) AS seat_chips, ts.seat_no").
 		Where("sp.session_id", sessionID).
 		Scan(&players); e != nil {
 		return e
 	}
 
 	for rank, p := range players {
-		chipsFinal := p.Chips
+		var chipsFinal int64
+		if p.SeatChips > 0 {
+			chipsFinal = p.SeatChips // live seat chips most accurate
+		} else if p.TotalHands > 0 {
+			chipsFinal = p.ChipsFinal // fallback: last hand ending chips
+		} else {
+			chipsFinal = p.TotalBuyin // 0 hands: return buyin in full
+		}
 		profit := chipsFinal - p.TotalBuyin
 
 		_, _ = g.DB().Model("session_players").
@@ -181,18 +244,51 @@ func settleSession(ctx context.Context, sessionID, tableID int64) error {
 	return nil
 }
 
+func onDeal(state *game.GameState) {
+	// Send each player their private hole cards as a string array
+	for _, p := range state.Players {
+		if len(p.HoleCards) == 0 {
+			continue
+		}
+		cards := make([]string, len(p.HoleCards))
+		for i, c := range p.HoleCards {
+			cards[i] = c.String()
+		}
+		g.Log().Infof(nil, "[onDeal] sending hole_cards=%v to userID=%d seat=%d", cards, p.UserID, p.SeatNo)
+		ws.GlobalHub().SendToUser(state.TableID, p.UserID, ws.MsgTypeDeal, g.Map{
+			"hole_cards": cards,
+		})
+	}
+}
+
 func onAction(state *game.GameState, action game.PlayerAction) {
+	// Persist to game_actions
+	_, _ = g.DB().Model("game_actions").Data(g.Map{
+		"game_id":    state.GameID,
+		"user_id":    action.UserID,
+		"seat_no":    action.SeatNo,
+		"stage":      state.Stage,
+		"action":     action.Action,
+		"amount":     action.Amount,
+		"pot_after":  state.Pot,
+		"action_seq": state.ActionSeq,
+	}).Insert()
+
 	ws.GlobalHub().BroadcastTable(state.TableID, ws.MsgTypeActionResult, g.Map{
-		"game_id": state.GameID,
-		"seat":    action.SeatNo,
-		"action":  action.Action,
-		"amount":  action.Amount,
-		"pot":     state.Pot,
+		"game_id":      state.GameID,
+		"seat":         action.SeatNo,
+		"action":       action.Action,
+		"amount":       action.Amount,
+		"pot":          state.Pot,
+		"current_seat": state.CurrentSeat,
+		"deadline":     state.ActionDeadline,
 	})
+	MaybeTriggerBot(state)
 }
 
 func onStageChange(state *game.GameState) {
 	ws.GlobalHub().BroadcastTable(state.TableID, ws.MsgTypeGameState, buildGameStateMsg(state))
+	MaybeTriggerBot(state)
 }
 
 func makeOnHandEnd(sessionID int64) func(result game.HandEndResult) {
@@ -204,25 +300,39 @@ func makeOnHandEnd(sessionID int64) func(result game.HandEndResult) {
 	}
 }
 
+// BuildGameStateForClient returns a ws-ready map for the given game state.
+func BuildGameStateForClient(state *game.GameState) g.Map {
+	return buildGameStateMsg(state)
+}
+
 func buildGameStateMsg(state *game.GameState) g.Map {
 	players := make([]g.Map, 0)
 	for _, p := range state.Players {
 		players = append(players, g.Map{
 			"seat":     p.SeatNo,
 			"nickname": p.Nickname,
+			"avatar":   p.Avatar,
 			"chips":    p.Chips,
 			"bet":      p.Bet,
 			"status":   p.Status,
 		})
 	}
+	// community_cards as string array so frontend can iterate directly
+	community := make([]string, len(state.CommunityCards))
+	for i, c := range state.CommunityCards {
+		community[i] = c.String()
+	}
 	return g.Map{
 		"game_id":         state.GameID,
 		"stage":           state.Stage,
-		"community_cards": game.CardsToStr(state.CommunityCards),
+		"community_cards": community,
 		"pot":             state.Pot,
 		"current_seat":    state.CurrentSeat,
 		"deadline":        state.ActionDeadline,
 		"hand_index":      state.HandIndex,
+		"dealer_seat":     state.DealerSeat,
+		"small_blind":     state.SmallBlind,
+		"big_blind":       state.BigBlind,
 		"players":         players,
 	}
 }

@@ -128,7 +128,7 @@ func GetTableRank(ctx context.Context, tableID int64) (interface{}, error) {
 	if e := g.DB().Model("room_sessions").
 		Where("table_id", tableID).Where("status", 1).OrderDesc("id").
 		Scan(&session); e != nil || session.Id == 0 {
-		return nil, gerror.New("无活跃场次")
+		return g.Map{"session_id": 0, "players": []interface{}{}}, nil
 	}
 
 	type rankRow struct {

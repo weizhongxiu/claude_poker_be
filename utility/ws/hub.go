@@ -24,9 +24,11 @@ const (
 	MsgTypeRankUpdate   = "rank_update"   // Real-time ranking panel
 	MsgTypeChat         = "chat"          // Chat message broadcast
 	MsgTypeBuyinRequest = "buyin_request" // Rebuy approval request (for admins)
-	MsgTypeSessionEnd   = "session_end"   // Session ended
-	MsgTypeError        = "error"         // Error notification
-	MsgTypePong         = "pong"          // Heartbeat response
+	MsgTypeShowdown     = "showdown"      // Showdown: reveal all hole cards
+	MsgTypeSessionStarted = "session_started" // Session started
+	MsgTypeSessionEnd     = "session_end"     // Session ended
+	MsgTypeError          = "error"           // Error notification
+	MsgTypePong           = "pong"            // Heartbeat response
 
 	// Client → server
 	MsgTypeAction = "action" // Player game action

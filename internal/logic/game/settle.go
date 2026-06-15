@@ -15,6 +15,9 @@ import (
 
 // OnHandEnd persists hand results to DB and broadcasts via WebSocket.
 func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) error {
+	tableIDVal, _ := g.DB().Model("room_sessions").Fields("table_id").Where("id", sessionID).Value()
+	tableID := tableIDVal.Int64()
+
 	now := time.Now()
 	communityStr := game.CardsToStr(result.CommunityCards)
 	seedHex := game.SeedToHex(result.ShuffleSeed)
@@ -94,9 +97,11 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 				"position":       p.Position,
 				"status":         playerStatus(p),
 			}).Update()
-		_, _ = g.DB().Model("table_seats").
-			Where("user_id", p.UserID).
-			Data(g.Map{"chips": p.ChipsEnd}).Update()
+		if tableID > 0 {
+			_, _ = g.DB().Model("table_seats").
+				Where("table_id", tableID).Where("user_id", p.UserID).
+				Data(g.Map{"chips": p.ChipsEnd}).Update()
+		}
 	}
 
 	// 3. pot_distributions + pot_winner_details
@@ -159,6 +164,7 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 			Data(g.Map{
 				"total_hands": gdb.Raw("total_hands + 1"),
 				"result":      gdb.Raw(fmt.Sprintf("result + %d", p.Result)),
+				"chips_final": p.ChipsEnd, // keep current so crash-recovery sees correct value
 				"vpip":        gdb.Raw(fmt.Sprintf("ROUND((vpip * total_hands + %d) / (total_hands + 1), 2)", vpipVal*100)),
 				"win_rate":    gdb.Raw(fmt.Sprintf("ROUND((win_rate * total_hands + %d) / (total_hands + 1), 2)", winVal*100)),
 			}).Update()
@@ -174,14 +180,67 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 		}).Update()
 
 	// 7. Broadcast hand result
-	broadcastHandResult(sessionID, result)
+	// Sync in-memory chip counts so next hand starts with correct stacks.
+	if tableID > 0 {
+		for _, p := range result.Players {
+			game.GlobalEngine().UpdatePlayerChips(tableID, p.UserID, p.ChipsEnd)
+		}
+	}
 
-	// 8. Start next hand after delay
-	tableIDVal, _ := g.DB().Model("room_sessions").Fields("table_id").Where("id", sessionID).Value()
-	tableID := tableIDVal.Int64()
+	// If showdown occurred, broadcast hole cards first and wait 5s before result.
+	wentToSD := false
+	for _, p := range result.Players {
+		if p.WentToSD {
+			wentToSD = true
+			break
+		}
+	}
+	// Build per-player win amounts from pots.
+	winAmounts := make(map[int64]int64) // userID → total won
+	for _, pot := range result.Pots {
+		for _, share := range pot.Winners {
+			uid := seatToUserID(result.Players, share.SeatNo)
+			winAmounts[uid] += share.Amount
+		}
+	}
+
+	if wentToSD && tableID > 0 {
+		type showdownPlayer struct {
+			UserID    int64  `json:"user_id"`
+			SeatNo    int    `json:"seat_no"`
+			HoleCards string `json:"hole_cards"`
+			HandRank  int    `json:"hand_rank"`
+			HandDesc  string `json:"hand_desc"`
+			IsWinner  bool   `json:"is_winner"`
+			WinAmount int64  `json:"win_amount"`
+		}
+		var sdPlayers []showdownPlayer
+		for _, p := range result.Players {
+			if p.WentToSD {
+				sdPlayers = append(sdPlayers, showdownPlayer{
+					UserID:    p.UserID,
+					SeatNo:    p.SeatNo,
+					HoleCards: game.CardsToStr(p.HoleCards),
+					HandRank:  p.HandResult.Rank,
+					HandDesc:  p.HandResult.Desc,
+					IsWinner:  p.IsWinner,
+					WinAmount: winAmounts[p.UserID],
+				})
+			}
+		}
+		ws.GlobalHub().BroadcastTable(tableID, ws.MsgTypeShowdown, g.Map{
+			"game_id": result.GameID,
+			"players": sdPlayers,
+		})
+		time.Sleep(5 * time.Second)
+	}
+
+	broadcastHandResult(sessionID, tableID, result)
+	broadcastRankUpdate(sessionID, tableID)
+
+	// 8. Start next hand immediately after result broadcast (showdown already waited 5s).
 	if tableID > 0 {
 		go func() {
-			time.Sleep(3 * time.Second)
 			statusVal, _ := g.DB().Model("room_sessions").Fields("status").Where("id", sessionID).Value()
 			if statusVal.Int() != 1 {
 				return
@@ -197,9 +256,7 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 	return nil
 }
 
-func broadcastHandResult(sessionID int64, result game.HandEndResult) {
-	tableIDVal, _ := g.DB().Model("room_sessions").Fields("table_id").Where("id", sessionID).Value()
-	tableID := tableIDVal.Int64()
+func broadcastHandResult(sessionID int64, tableID int64, result game.HandEndResult) {
 	if tableID == 0 {
 		return
 	}
@@ -234,11 +291,70 @@ func broadcastHandResult(sessionID int64, result game.HandEndResult) {
 		}
 		pots = append(pots, potMsg{Type: pot.PotType, Amount: pot.Amount, Winners: winners})
 	}
+	// Build win amount per seat from pots
+	winBySeat := make(map[int]int64)
+	for _, pot := range result.Pots {
+		for _, share := range pot.Winners {
+			winBySeat[share.SeatNo] += share.Amount
+		}
+	}
+	// Include final chip counts + winner info so frontend can show YOU WIN effect.
+	type playerResult struct {
+		SeatNo    int   `json:"seat_no"`
+		ChipsEnd  int64 `json:"chips_end"`
+		IsWinner  bool  `json:"is_winner"`
+		WinAmount int64 `json:"win_amount"` // net profit = ChipsEnd - ChipsStart
+	}
+	playersFinal := make([]playerResult, 0, len(result.Players))
+	for _, p := range result.Players {
+		winAmt := winBySeat[p.SeatNo]
+		playersFinal = append(playersFinal, playerResult{
+			SeatNo: p.SeatNo, ChipsEnd: p.ChipsEnd,
+			IsWinner: winAmt > 0, WinAmount: p.Result, // net profit, not gross pot
+		})
+	}
 	ws.GlobalHub().BroadcastTable(tableID, ws.MsgTypeHandResult, g.Map{
 		"game_id": result.GameID, "hand_no": result.HandNo,
 		"is_split_pot": result.IsSplitPot, "run_twice_used": result.RunTwiceUsed,
-		"pots": pots,
+		"pots":    pots,
+		"players": playersFinal,
 	})
+}
+
+func broadcastRankUpdate(sessionID, tableID int64) {
+	if tableID == 0 {
+		return
+	}
+	type rankRow struct {
+		UserID     int64  `orm:"user_id"`
+		Nickname   string `orm:"nickname"`
+		Avatar     string `orm:"avatar"`
+		TotalBuyin int64  `orm:"total_buyin"`
+		ChipsFinal int64  `orm:"chips_final"`
+		Result     int64  `orm:"result"`
+		TotalHands int    `orm:"total_hands"`
+	}
+	var rows []*rankRow
+	_ = g.DB().Model("session_players sp").
+		LeftJoin("users u", "u.id = sp.user_id").
+		Fields("sp.user_id, u.nickname, u.avatar, sp.total_buyin, sp.chips_final, sp.result, sp.total_hands").
+		Where("sp.session_id", sessionID).
+		OrderDesc("sp.chips_final").
+		Scan(&rows)
+
+	players := make([]g.Map, 0, len(rows))
+	for _, r := range rows {
+		players = append(players, g.Map{
+			"user_id":     r.UserID,
+			"nickname":    r.Nickname,
+			"avatar":      r.Avatar,
+			"total_buyin": r.TotalBuyin,
+			"chips_final": r.ChipsFinal,
+			"result":      r.Result,
+			"total_hands": r.TotalHands,
+		})
+	}
+	ws.GlobalHub().BroadcastTable(tableID, ws.MsgTypeRankUpdate, g.Map{"players": players})
 }
 
 func totalPot(pots []game.PotResult) int64 {

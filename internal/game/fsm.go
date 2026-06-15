@@ -19,6 +19,8 @@ type FSMCallbacks struct {
 	OnStageChange func(state *GameState)
 	// OnHandEnd is called when a hand is fully settled.
 	OnHandEnd func(result HandEndResult)
+	// OnDeal is called after hole cards are dealt; used to push private cards to each player.
+	OnDeal func(state *GameState)
 }
 
 // HandFSM manages the state machine for one hand.
@@ -65,9 +67,12 @@ func (f *HandFSM) Run(ctx context.Context) {
 	// Start at PreFlop
 	f.state.Stage = StagePreFlop
 	f.dealHoleCards()
+	if f.callbacks.OnDeal != nil {
+		f.callbacks.OnDeal(f.state)
+	}
 	f.setFirstToAct(StagePreFlop)
+	f.startActionTimer(ctx) // set deadline before notifying so clients get it
 	f.notifyStageChange()
-	f.startActionTimer(ctx)
 
 	for {
 		select {
@@ -104,7 +109,10 @@ func (f *HandFSM) Run(ctx context.Context) {
 				f.finishHand()
 				return
 			}
+			f.startActionTimer(ctx) // new stage: start timer for first player
 			f.notifyStageChange()
+		} else {
+			// Same stage, next player's turn: restart the 30s timer
 			f.startActionTimer(ctx)
 		}
 	}
@@ -218,6 +226,7 @@ func (f *HandFSM) processAction(action PlayerAction) {
 		if p.Chips == 0 {
 			p.Status = PlayerAllIn
 		}
+		action.Amount = toCall
 		f.recordAction(action.SeatNo, ActionCall, toCall)
 
 	case ActionBet:
@@ -236,6 +245,7 @@ func (f *HandFSM) processAction(action PlayerAction) {
 		if p.Chips == 0 {
 			p.Status = PlayerAllIn
 		}
+		action.Amount = amount
 		f.recordAction(action.SeatNo, ActionBet, amount)
 
 	case ActionRaise:
@@ -260,6 +270,7 @@ func (f *HandFSM) processAction(action PlayerAction) {
 		if p.Chips == 0 {
 			p.Status = PlayerAllIn
 		}
+		action.Amount = raiseTotal
 		f.recordAction(action.SeatNo, ActionRaise, raiseTotal)
 
 	case ActionAllIn:
@@ -275,16 +286,24 @@ func (f *HandFSM) processAction(action PlayerAction) {
 				p.IsPFR = true
 			}
 		}
+		action.Amount = amount
 		f.recordAction(action.SeatNo, ActionAllIn, amount)
 	}
 
 	_ = startTime
+
+	// If hand is already over (e.g. everyone else folded), clear current_seat so
+	// the frontend does not show betting UI for the lone surviving player.
+	if f.onlyOneNotFolded() {
+		f.state.CurrentSeat = -1
+	} else {
+		// Advance current seat BEFORE callback so broadcast carries the correct next-to-act seat.
+		f.state.CurrentSeat = f.nextToAct(action.SeatNo)
+	}
+
 	if f.callbacks.OnAction != nil {
 		f.callbacks.OnAction(s, action)
 	}
-
-	// Advance current seat
-	f.state.CurrentSeat = f.nextToAct(action.SeatNo)
 }
 
 func (f *HandFSM) handleTimeout() {
@@ -308,6 +327,19 @@ func (f *HandFSM) handleTimeout() {
 
 func (f *HandFSM) recordAction(seatNo, action int, amount int64) {
 	f.state.ActionSeq++
+	// Forced bets (blind/ante/straddle) don't count as voluntary action
+	if action == ActionBlind || action == ActionAnte || action == ActionStraddle {
+		return
+	}
+	if f.state.ActedSeats == nil {
+		f.state.ActedSeats = make(map[int]bool)
+	}
+	if action == ActionBet || action == ActionRaise {
+		// Everyone must respond to the aggression
+		f.state.ActedSeats = map[int]bool{seatNo: true}
+	} else {
+		f.state.ActedSeats[seatNo] = true
+	}
 }
 
 // --- Round/Stage logic ---
@@ -357,8 +389,13 @@ func (f *HandFSM) isRoundEnd() bool {
 }
 
 func (f *HandFSM) everyoneActed() bool {
-	// Simple check: current seat has looped back to the aggressor or first player
-	// In practice tracked via round trip flag; simplified here
+	for _, p := range f.state.Players {
+		if p.Status == PlayerActive {
+			if !f.state.ActedSeats[p.SeatNo] {
+				return false
+			}
+		}
+	}
 	return true
 }
 
@@ -412,6 +449,7 @@ func (f *HandFSM) resetRoundBets() {
 	for _, p := range f.state.Players {
 		p.Bet = 0
 	}
+	f.state.ActedSeats = make(map[int]bool)
 }
 
 // --- Showdown & Settlement ---
@@ -420,18 +458,31 @@ func (f *HandFSM) finishHand() {
 	s := f.state
 	start := time.Now()
 
-	// Mark showdown participants
+	// Count non-folded players to determine if this is a real showdown
+	notFoldedCount := 0
 	for _, p := range s.Players {
 		if p.Status != PlayerFolded {
-			p.WentToSD = true
+			notFoldedCount++
+		}
+	}
+	isRealShowdown := notFoldedCount >= 2
+
+	// Mark showdown participants (only if multiple players reached showdown)
+	if isRealShowdown {
+		for _, p := range s.Players {
+			if p.Status != PlayerFolded {
+				p.WentToSD = true
+			}
 		}
 	}
 
-	// Evaluate hands
+	// Evaluate hands (only needed for real showdowns)
 	results := make(map[int]HandResult)
-	for seatNo, p := range s.Players {
-		if p.Status != PlayerFolded && len(p.HoleCards) > 0 {
-			results[seatNo] = EvalBest5(p.HoleCards, s.CommunityCards)
+	if isRealShowdown {
+		for seatNo, p := range s.Players {
+			if p.Status != PlayerFolded && len(p.HoleCards) > 0 {
+				results[seatNo] = EvalBest5(p.HoleCards, s.CommunityCards)
+			}
 		}
 	}
 
@@ -465,7 +516,7 @@ func (f *HandFSM) finishHand() {
 			IsPFR:      p.IsPFR,
 			WentToSD:   p.WentToSD,
 			FoldStage:  p.FoldStage,
-			IsShowCard: p.Status != PlayerFolded,
+			IsShowCard: p.Status != PlayerFolded && isRealShowdown,
 		}
 		if res, ok := results[seatNo]; ok {
 			playerEndStates[seatNo].HandResult = res
@@ -532,7 +583,7 @@ func (f *HandFSM) finishHand() {
 	for _, pe := range playerEndStates {
 		invested := pe.ForcedBet + pe.TotalBet
 		pe.ChipsEnd = s.Players[pe.SeatNo].Chips + pe.ChipsEnd // remaining + won
-		pe.Result = pe.ChipsEnd - pe.ChipsStart + invested      // net P&L
+		pe.Result = pe.ChipsEnd - pe.ChipsStart                 // net P&L = ChipsEnd - ChipsStart
 	}
 
 	// Build player slice

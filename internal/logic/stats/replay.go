@@ -13,30 +13,31 @@ import (
 
 // ListHands returns the hand list for a user, optionally filtered by session or favorites.
 func ListHands(ctx context.Context, userID int64, req *v1.HandListReq) (list []v1.HandItem, total int, err error) {
-	m := g.DB().Model("game_players gp").
+	base := g.DB().Model("game_players gp").
 		LeftJoin("games g", "g.id = gp.game_id").
-		Fields(`
-			g.id as game_id, g.hand_no, g.session_id,
-			g.small_blind, g.big_blind, g.pot,
-			g.community_cards, g.started_at,
-			gp.hole_cards, gp.hand_rank, gp.hand_rank_desc, gp.result
-		`).
 		Where("gp.user_id", userID).
 		Where("g.status", 2)
 
 	if req.SessionID > 0 {
-		m = m.Where("g.session_id", req.SessionID)
+		base = base.Where("g.session_id", req.SessionID)
 	}
 
 	// Favorites filter
 	if req.Favorites == 1 {
-		m = m.Where("EXISTS (SELECT 1 FROM hand_favorites hf WHERE hf.game_id=g.id AND hf.user_id=?)", userID)
+		base = base.Where("EXISTS (SELECT 1 FROM hand_favorites hf WHERE hf.game_id=g.id AND hf.user_id=?)", userID)
 	}
 
-	total, err = m.Count()
+	total, err = base.Count()
 	if err != nil {
 		return
 	}
+
+	m := base.Fields(`
+		g.id as game_id, g.hand_no, g.session_id,
+		g.small_blind, g.big_blind, g.pot,
+		g.community_cards, g.started_at,
+		gp.hole_cards, gp.hand_rank, gp.hand_rank_desc, gp.result
+	`)
 
 	type row struct {
 		GameID         uint64      `json:"game_id"`

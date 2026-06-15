@@ -12,6 +12,7 @@ import (
 	"claude-test/internal/controller/stats"
 	"claude-test/internal/controller/table"
 	"claude-test/internal/controller/user"
+	gameLogic "claude-test/internal/logic/game"
 )
 
 var (
@@ -20,11 +21,14 @@ var (
 		Usage: "main",
 		Brief: "start http server",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+			// Recover any active sessions from DB (engine state is in-memory; restart clears it)
+			go gameLogic.RecoverActiveSessions(ctx)
+
 			s := g.Server()
 
 			// REST API group
 			s.Group("/", func(group *ghttp.RouterGroup) {
-				group.Middleware(ghttp.MiddlewareHandlerResponse)
+				group.Middleware(ghttp.MiddlewareCORS, ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					user.NewV1(),
 					table.NewV1(),

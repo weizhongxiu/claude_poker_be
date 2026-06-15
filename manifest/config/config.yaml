@@ -19,6 +19,7 @@ database:
     pass: "poker123456"
     name: "app"
     charset: "utf8mb4"
+    timezone: "Local"
 
 # https://goframe.org/docs/core/gredis-config
 redis:

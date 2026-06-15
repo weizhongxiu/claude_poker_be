@@ -87,6 +87,7 @@ type GameState struct {
 	SmallBlind     int64
 	BigBlind       int64
 	Ante           int64
+	ActedSeats     map[int]bool // tracks which seats have acted in the current betting round
 }
 
 // PlayerAction is sent by a player to the FSM.

@@ -104,6 +104,16 @@ func evalFive(cards []Card) HandResult {
 		return c[i].Rank > c[j].Rank
 	})
 
+	// Fewer than 5 cards can't form any poker hand rank — return High Card.
+	if len(c) < 5 {
+		return HandResult{
+			Rank:     HandHighCard,
+			Desc:     handRankDesc[HandHighCard],
+			Cards:    c,
+			Tiebreak: ranksDesc(c),
+		}
+	}
+
 	flush := isFlush(c)
 	straight, highCard := isStraight(c)
 
@@ -206,6 +216,9 @@ func evalFive(cards []Card) HandResult {
 // ---- helpers ----
 
 func isFlush(cards []Card) bool {
+	if len(cards) < 5 {
+		return false
+	}
 	suit := cards[0].Suit
 	for _, c := range cards[1:] {
 		if c.Suit != suit {
@@ -224,7 +237,11 @@ func isStraight(cards []Card) (bool, int) {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(ranks)))
 
-	// Normal straight
+	if len(ranks) < 5 {
+		return false, 0
+	}
+
+	// Normal straight: all 5 ranks must be consecutive descending
 	ok := true
 	for i := 1; i < len(ranks); i++ {
 		if ranks[i] != ranks[i-1]-1 {
@@ -237,7 +254,7 @@ func isStraight(cards []Card) (bool, int) {
 	}
 
 	// Ace-low straight: A-2-3-4-5 (wheel)
-	if ranks[0] == RankAce && ranks[1] == 5 && ranks[2] == 4 && ranks[3] == 3 && ranks[4] == 2 {
+	if len(ranks) >= 5 && ranks[0] == RankAce && ranks[1] == 5 && ranks[2] == 4 && ranks[3] == 3 && ranks[4] == 2 {
 		return true, 5 // high card is 5 for wheel
 	}
 

@@ -113,6 +113,40 @@ type ApproveBuyInReq struct {
 
 type ApproveBuyInRes struct{}
 
+// --- Table Info (seats + config) ---
+
+type TableInfoReq struct {
+	g.Meta `path:"/table/{id}/info" method:"get" tags:"牌桌" summary:"牌桌信息和座位"`
+	ID     int64 `json:"id" in:"path"`
+}
+
+type TableInfoRes struct {
+	TableID     int64      `json:"table_id"`
+	TableNo     string     `json:"table_no"`
+	Name        string     `json:"name"`
+	GameType    int        `json:"game_type"`
+	SmallBlind  int64      `json:"small_blind"`
+	BigBlind    int64      `json:"big_blind"`
+	MinBuyin    int64      `json:"min_buyin"`
+	MaxBuyin    int64      `json:"max_buyin"`
+	MaxSeats    int        `json:"max_seats"`
+	Duration    float64    `json:"duration"`
+	Status      int        `json:"status"`
+	CreatorID   int64      `json:"creator_id"`
+	SessionID     int64      `json:"session_id"`
+	StartedAt     string     `json:"started_at"`
+	SessionStatus int        `json:"session_status"`
+	Seats       []SeatInfo `json:"seats"`
+}
+
+type SeatInfo struct {
+	SeatNo   int    `json:"seat_no"`
+	UserID   int64  `json:"user_id"`
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
+	Chips    int64  `json:"chips"`
+}
+
 // --- Table Rank ---
 
 type TableRankReq struct {
@@ -140,6 +174,55 @@ type RankPlayer struct {
 	ActivityPts int     `json:"activity_pts"`
 	IsMVP       bool    `json:"is_mvp"`
 	Rank        int     `json:"rank"`
+}
+
+// --- Invite Friend ---
+
+type InviteReq struct {
+	g.Meta    `path:"/table/invite" method:"post" tags:"牌桌" summary:"邀请好友"`
+	TableID   int64 `json:"table_id"   v:"required"`
+	SessionID int64 `json:"session_id"` // 0 = pre-session stage
+	InviteeID int64 `json:"invitee_id" v:"required"`
+}
+
+type InviteRes struct {
+	InvitationID int64 `json:"invitation_id"`
+}
+
+// --- Accept / Reject Invite ---
+
+type RespondInviteReq struct {
+	g.Meta       `path:"/table/invite/respond" method:"post" tags:"牌桌" summary:"接受或拒绝邀请"`
+	InvitationID int64 `json:"invitation_id" v:"required"`
+	Accept       bool  `json:"accept"`
+}
+
+type RespondInviteRes struct {
+	Status int `json:"status"` // 2=accepted 3=rejected
+}
+
+// --- Add Bots ---
+
+type AddBotsReq struct {
+	g.Meta  `path:"/table/{id}/bots" method:"post" tags:"牌桌" summary:"添加机器人"`
+	ID      int64 `json:"id"    in:"path"`
+	Count   int   `json:"count" v:"required|min:1|max:8#机器人数量 1-8"`
+}
+
+type AddBotsRes struct {
+	Count int `json:"count"` // actual number of bots added
+}
+
+// --- End Session ---
+
+type EndSessionReq struct {
+	g.Meta    `path:"/table/end" method:"post" tags:"牌桌" summary:"结束对局"`
+	SessionID int64 `json:"session_id" v:"required"`
+	Reason    int   `json:"reason" d:"2"` // 1=time_up 2=manual 3=all_left
+}
+
+type EndSessionRes struct {
+	SessionID int64 `json:"session_id"`
 }
 
 // --- Lobby ---

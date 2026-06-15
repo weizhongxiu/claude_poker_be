@@ -28,6 +28,7 @@ type SessionItem struct {
 	TotalHands  int     `json:"total_hands"`
 	TotalBuyin  int64   `json:"total_buyin"`
 	Result      int64   `json:"result"`   // my profit/loss
+	Status      int     `json:"status"`   // 1=running 2=ended
 	StartedAt   string  `json:"started_at"`
 	EndedAt     string  `json:"ended_at"`
 	Duration    float64 `json:"duration"`
@@ -41,19 +42,20 @@ type SessionDetailReq struct {
 }
 
 type SessionDetailRes struct {
-	SessionID    int64          `json:"session_id"`
-	SessionNo    string         `json:"session_no"`
-	GameType     int            `json:"game_type"`
-	SmallBlind   int64          `json:"small_blind"`
-	BigBlind     int64          `json:"big_blind"`
-	TotalHands   int            `json:"total_hands"`
-	TotalFlow    int64          `json:"total_flow"`
-	TotalBuyin   int64          `json:"total_buyin"`
-	AvgPot       int64          `json:"avg_pot"`
-	MaxPot       int64          `json:"max_pot"`
-	Duration     float64        `json:"duration"`
-	StartedAt    string         `json:"started_at"`
-	EndedAt      string         `json:"ended_at"`
+	SessionID    int64           `json:"session_id"`
+	SessionNo    string          `json:"session_no"`
+	GameType     int             `json:"game_type"`
+	Status       int             `json:"status"` // 1=running 2=ended
+	SmallBlind   int64           `json:"small_blind"`
+	BigBlind     int64           `json:"big_blind"`
+	TotalHands   int             `json:"total_hands"`
+	TotalFlow    int64           `json:"total_flow"`
+	TotalBuyin   int64           `json:"total_buyin"`
+	AvgPot       int64           `json:"avg_pot"`
+	MaxPot       int64           `json:"max_pot"`
+	Duration     float64         `json:"duration"`
+	StartedAt    string          `json:"started_at"`
+	EndedAt      string          `json:"ended_at"`
 	Players      []SessionPlayer `json:"players"`
 }
 

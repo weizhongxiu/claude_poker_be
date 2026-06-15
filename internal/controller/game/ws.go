@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -67,8 +68,11 @@ func (c *ControllerV1) WsTable(r *ghttp.Request) {
 
 	client := ws.GlobalHub().NewClient(userID, tableID, isPlayer, conn)
 
-	// Send current game state to newly connected client
-	sendCurrentState(r.Context(), client, tableID, userID)
+	// Send current game state after a brief yield so the hub registers the client first.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		sendCurrentState(r.Context(), client, tableID, userID)
+	}()
 
 	// Read pump blocks until connection closes
 	client.ReadPump(func(uid, tid int64, msg []byte) {
@@ -76,13 +80,30 @@ func (c *ControllerV1) WsTable(r *ghttp.Request) {
 	})
 }
 
-// sendCurrentState pushes the current game state to a reconnecting client.
+// sendCurrentState pushes the current game state (and hole cards if in-hand) to a newly connected client.
 func sendCurrentState(ctx context.Context, client *ws.Client, tableID, userID int64) {
-	// TODO: read from Redis GameState and push game_state + private hole_cards
-	_ = ctx
-	_ = client
-	_ = tableID
-	_ = userID
+	state := game.GlobalEngine().GetState(tableID)
+	if state == nil {
+		return
+	}
+	ws.GlobalHub().SendToUser(tableID, userID, ws.MsgTypeGameState, gamelogic.BuildGameStateForClient(state))
+
+	// Re-send hole cards if a hand is in progress so reconnecting players see their cards.
+	if state.Stage > 0 {
+		for _, p := range state.Players {
+			if p.UserID != userID || len(p.HoleCards) == 0 {
+				continue
+			}
+			cards := make([]string, len(p.HoleCards))
+			for i, c := range p.HoleCards {
+				cards[i] = c.String()
+			}
+			ws.GlobalHub().SendToUser(tableID, userID, ws.MsgTypeDeal, g.Map{
+				"hole_cards": cards,
+			})
+			break
+		}
+	}
 }
 
 // handleClientMessage processes incoming messages from players.
@@ -98,11 +119,16 @@ func handleClientMessage(ctx context.Context, userID, tableID int64, raw []byte)
 	switch msg.Type {
 	case ws.MsgTypeAction:
 		var data struct {
-			GameID int64 `json:"game_id"`
-			Action int   `json:"action"`
-			Amount int64 `json:"amount"`
+			GameID int64           `json:"game_id"`
+			Action json.RawMessage `json:"action"` // accepts int or string
+			Amount int64           `json:"amount"`
 		}
 		if err := json.Unmarshal(msg.Data, &data); err != nil {
+			return
+		}
+		actionInt := parseAction(data.Action)
+		if actionInt == 0 {
+			ws.GlobalHub().SendToUser(tableID, userID, ws.MsgTypeError, g.Map{"msg": "无效行动"})
 			return
 		}
 		// Find seat
@@ -114,7 +140,7 @@ func handleClientMessage(ctx context.Context, userID, tableID int64, raw []byte)
 		err := game.GlobalEngine().SubmitAction(tableID, game.PlayerAction{
 			UserID: userID,
 			SeatNo: seatNo,
-			Action: data.Action,
+			Action: actionInt,
 			Amount: data.Amount,
 		})
 		if err != nil {
@@ -135,6 +161,32 @@ func handleClientMessage(ctx context.Context, userID, tableID int64, raw []byte)
 	case ws.MsgTypePing:
 		ws.GlobalHub().SendToUser(tableID, userID, ws.MsgTypePong, nil)
 	}
+}
+
+// parseAction converts a JSON value (int or string) to a game action constant.
+func parseAction(raw json.RawMessage) int {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil && n > 0 {
+		return n
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		switch s {
+		case "fold":
+			return game.ActionFold
+		case "check":
+			return game.ActionCheck
+		case "call":
+			return game.ActionCall
+		case "raise":
+			return game.ActionRaise
+		case "bet":
+			return game.ActionBet
+		case "allin":
+			return game.ActionAllIn
+		}
+	}
+	return 0
 }
 
 func getSeatNo(ctx context.Context, tableID, userID int64) int {

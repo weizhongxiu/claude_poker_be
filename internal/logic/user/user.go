@@ -37,6 +37,7 @@ func Register(ctx context.Context, phone, password, nickname string) (userID int
 		"phone":    phone,
 		"password": hash,
 		"status":   1,
+		"avatar":   fmt.Sprintf("https://api.dicebear.com/7.x/adventurer/svg?seed=%s", uid),
 	}).Insert()
 	if err != nil {
 		return

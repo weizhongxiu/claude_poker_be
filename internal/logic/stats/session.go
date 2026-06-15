@@ -12,28 +12,32 @@ import (
 
 // ListSessions returns paginated session history for a user.
 func ListSessions(ctx context.Context, userID int64, req *v1.SessionListReq) (list []v1.SessionItem, total int, err error) {
-	m := g.DB().Model("session_players sp").
+	base := g.DB().Model("session_players sp").
 		LeftJoin("room_sessions rs", "rs.id = sp.session_id").
-		Fields(`
-			sp.session_id, rs.session_no, rs.table_id, rs.game_type,
-			rs.small_blind, rs.big_blind, rs.total_hands, rs.total_buyin,
-			sp.result, sp.total_buyin as my_buyin,
-			rs.started_at, rs.ended_at, rs.duration
-		`).
 		Where("sp.user_id", userID).
-		Where("rs.status", 2)
+		WhereIn("rs.status", g.Slice{1, 2})
 
 	if req.GameType > 0 {
-		m = m.Where("rs.game_type", req.GameType)
+		base = base.Where("rs.game_type", req.GameType)
 	}
 	if req.DateFrom != "" {
-		m = m.WhereGTE("rs.started_at", req.DateFrom)
+		base = base.WhereGTE("rs.started_at", req.DateFrom)
 	}
 	if req.DateTo != "" {
-		m = m.WhereLTE("rs.started_at", req.DateTo+" 23:59:59")
+		base = base.WhereLTE("rs.started_at", req.DateTo+" 23:59:59")
 	}
 
-	total, err = m.Count()
+	total, err = base.Count()
+	if err != nil {
+		return
+	}
+
+	m := base.Fields(`
+		sp.session_id, rs.session_no, rs.table_id, rs.game_type, rs.status,
+		rs.small_blind, rs.big_blind, rs.total_hands, rs.total_buyin,
+		sp.result, sp.total_buyin as my_buyin,
+		rs.started_at, rs.ended_at, rs.duration
+	`)
 	if err != nil {
 		return
 	}
@@ -43,6 +47,7 @@ func ListSessions(ctx context.Context, userID int64, req *v1.SessionListReq) (li
 		SessionNo  string      `json:"session_no"`
 		TableID    uint64      `json:"table_id"`
 		GameType   int         `json:"game_type"`
+		Status     int         `json:"status"`
 		SmallBlind int64       `json:"small_blind"`
 		BigBlind   int64       `json:"big_blind"`
 		TotalHands int         `json:"total_hands"`
@@ -65,6 +70,7 @@ func ListSessions(ctx context.Context, userID int64, req *v1.SessionListReq) (li
 			SessionNo:  r.SessionNo,
 			TableID:    int64(r.TableID),
 			GameType:   r.GameType,
+			Status:     r.Status,
 			SmallBlind: r.SmallBlind,
 			BigBlind:   r.BigBlind,
 			TotalHands: r.TotalHands,
@@ -89,6 +95,7 @@ func GetSessionDetail(ctx context.Context, userID, sessionID int64) (*v1.Session
 		Id         uint64      `json:"id"`
 		SessionNo  string      `json:"session_no"`
 		GameType   int         `json:"game_type"`
+		Status     int         `json:"status"`
 		SmallBlind int64       `json:"small_blind"`
 		BigBlind   int64       `json:"big_blind"`
 		TotalHands int         `json:"total_hands"`
@@ -146,6 +153,7 @@ func GetSessionDetail(ctx context.Context, userID, sessionID int64) (*v1.Session
 		SessionID:  sessionID,
 		SessionNo:  session.SessionNo,
 		GameType:   session.GameType,
+		Status:     session.Status,
 		SmallBlind: session.SmallBlind,
 		BigBlind:   session.BigBlind,
 		TotalHands: session.TotalHands,

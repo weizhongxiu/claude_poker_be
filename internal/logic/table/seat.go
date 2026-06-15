@@ -8,6 +8,9 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+
+	"claude-test/internal/game"
+	"claude-test/utility/ws"
 )
 
 const seatLockTTL = 10 // seconds
@@ -38,6 +41,16 @@ func TakeSeat(ctx context.Context, userID, tableID int64, seatNo int, buyIn int6
 	if e != nil || count > 0 {
 		_, _ = g.Redis().Del(ctx, lockKey)
 		return gerror.New("该座位已有玩家")
+	}
+
+	// Reject if the current session has already ended.
+	type sessStatusRow struct{ Status int `orm:"status"` }
+	var sessStatus sessStatusRow
+	_ = g.DB().Model("room_sessions").Fields("status").
+		Where("table_id", tableID).WhereIn("status", g.Slice{1, 2}).OrderDesc("id").Limit(1).Scan(&sessStatus)
+	if sessStatus.Status == 2 {
+		_, _ = g.Redis().Del(ctx, lockKey)
+		return gerror.New("牌局已结束，无法入座")
 	}
 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -80,15 +93,53 @@ func TakeSeat(ctx context.Context, userID, tableID int64, seatNo int, buyIn int6
 			return gerror.New("筹码变更失败，请重试")
 		}
 
-		if _, e2 = tx.Model("table_seats").Data(g.Map{
-			"table_id":  tableID,
-			"user_id":   userID,
-			"seat_no":   seatNo,
-			"chips":     buyIn,
-			"status":    1,
-			"joined_at": time.Now(),
-		}).Insert(); e2 != nil {
-			return e2
+		// uk_table_user: one row per (table_id, user_id). If user already has a row,
+		// update it in-place (seat_no may change). Otherwise upsert on (table_id, seat_no).
+		type existRow struct {
+			ID int64 `orm:"id"`
+		}
+		var userRow existRow
+		_ = tx.Model("table_seats").Fields("id").
+			Where("table_id", tableID).Where("user_id", userID).Scan(&userRow)
+
+		if userRow.ID > 0 {
+			// User already has a row — update it to the new seat.
+			if _, e2 = tx.Model("table_seats").Where("id", userRow.ID).
+				Data(g.Map{
+					"seat_no":   seatNo,
+					"chips":     buyIn,
+					"status":    1,
+					"joined_at": time.Now(),
+				}).Update(); e2 != nil {
+				return e2
+			}
+		} else {
+			// No user row — upsert on (table_id, seat_no).
+			var seatRow existRow
+			_ = tx.Model("table_seats").Fields("id").
+				Where("table_id", tableID).Where("seat_no", seatNo).Scan(&seatRow)
+			if seatRow.ID > 0 {
+				if _, e2 = tx.Model("table_seats").Where("id", seatRow.ID).
+					Data(g.Map{
+						"user_id":   userID,
+						"chips":     buyIn,
+						"status":    1,
+						"joined_at": time.Now(),
+					}).Update(); e2 != nil {
+					return e2
+				}
+			} else {
+				if _, e2 = tx.Model("table_seats").Data(g.Map{
+					"table_id":  tableID,
+					"user_id":   userID,
+					"seat_no":   seatNo,
+					"chips":     buyIn,
+					"status":    1,
+					"joined_at": time.Now(),
+				}).Insert(); e2 != nil {
+					return e2
+				}
+			}
 		}
 
 		if _, e2 = tx.Model("buyin_records").Data(g.Map{
@@ -108,8 +159,43 @@ func TakeSeat(ctx context.Context, userID, tableID int64, seatNo int, buyIn int6
 
 	if err != nil {
 		_, _ = g.Redis().Del(ctx, lockKey)
+		return err
 	}
-	return err
+
+	// Fetch player info for WS broadcast and engine registration.
+	type userRow struct {
+		Nickname string `orm:"nickname"`
+		Avatar   string `orm:"avatar"`
+	}
+	var u userRow
+	_ = g.DB().Model("users").Fields("nickname,avatar").Where("id", userID).Scan(&u)
+
+	// Notify all clients at the table about the new player.
+	ws.GlobalHub().BroadcastTable(tableID, "player_joined", g.Map{
+		"player": g.Map{
+			"seat":     seatNo,
+			"user_id":  userID,
+			"nickname": u.Nickname,
+			"avatar":   u.Avatar,
+			"chips":    buyIn,
+			"status":   game.PlayerActive,
+		},
+	})
+
+	// If a game is already running, add the player to the engine so they
+	// participate from the next hand onwards.
+	if table.Status == 2 {
+		_ = game.GlobalEngine().AddPlayer(tableID, game.PlayerState{
+			UserID:   userID,
+			Nickname: u.Nickname,
+			Avatar:   u.Avatar,
+			SeatNo:   seatNo,
+			Chips:    buyIn,
+			Status:   game.PlayerActive,
+		})
+	}
+
+	return nil
 }
 
 // LeaveSeat removes a player from their seat and refunds chips.

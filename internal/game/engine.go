@@ -103,6 +103,25 @@ func (e *Engine) RemovePlayer(tableID, userID int64) {
 	}
 }
 
+// UpdatePlayerChips updates a player's chip count in the room's persistent player map.
+// Called after each hand ends so the next hand starts with the correct chip count.
+func (e *Engine) UpdatePlayerChips(tableID int64, userID int64, chips int64) {
+	e.mu.RLock()
+	room, ok := e.tables[tableID]
+	e.mu.RUnlock()
+	if !ok {
+		return
+	}
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	for _, p := range room.players {
+		if p.UserID == userID {
+			p.Chips = chips
+			return
+		}
+	}
+}
+
 // SubmitAction forwards a player action to the correct table's FSM.
 func (e *Engine) SubmitAction(tableID int64, action PlayerAction) error {
 	e.mu.RLock()
@@ -116,6 +135,23 @@ func (e *Engine) SubmitAction(tableID int64, action PlayerAction) error {
 	}
 	room.fsm.SubmitAction(action)
 	return nil
+}
+
+// GetState returns a snapshot of the current game state for a table, or nil if none.
+func (e *Engine) GetState(tableID int64) *GameState {
+	e.mu.RLock()
+	room, ok := e.tables[tableID]
+	e.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	if room.fsm == nil {
+		return nil
+	}
+	s := *room.fsm.state // shallow copy
+	return &s
 }
 
 // StartHand begins a new hand on the table.
@@ -150,12 +186,37 @@ func (e *Engine) StartHand(tableID int64, gameID int64, handNo string, handIdx i
 	}
 	room.mu.Unlock()
 
-	// Build seat order (sorted ascending)
+	// Poker action goes to the left of each seated player.
+	// Table layout: 1=bottom, 2=bottom-right, 3=right, 4=top-right,
+	// 5=top, 6=top-left, 7=left, 8=bottom-left, 9=center.
+	// "Left" on screen from seat 1 is seat 8, then 7, 6... (screen counter-clockwise = real table clockwise).
+	clockwiseSeats := []int{1, 8, 7, 6, 5, 4, 3, 2, 9}
+	clockwisePos := make(map[int]int, len(clockwiseSeats))
+	for i, s := range clockwiseSeats {
+		clockwisePos[s] = i
+	}
 	seatOrder := make([]int, 0, len(players))
 	for seatNo := range players {
 		seatOrder = append(seatOrder, seatNo)
 	}
-	sortInts(seatOrder)
+	// Sort by clockwise position; unknown seats go last.
+	for i := 1; i < len(seatOrder); i++ {
+		for j := i; j > 0; j-- {
+			pi := clockwisePos[seatOrder[j-1]]
+			pj := clockwisePos[seatOrder[j]]
+			if _, ok := clockwisePos[seatOrder[j-1]]; !ok {
+				pi = 999
+			}
+			if _, ok := clockwisePos[seatOrder[j]]; !ok {
+				pj = 999
+			}
+			if pi > pj {
+				seatOrder[j-1], seatOrder[j] = seatOrder[j], seatOrder[j-1]
+			} else {
+				break
+			}
+		}
+	}
 
 	// Rotate dealer seat (simple: increment)
 	dealerSeat := seatOrder[handIdx%len(seatOrder)]
