@@ -103,6 +103,22 @@ func (e *Engine) RemovePlayer(tableID, userID int64) {
 	}
 }
 
+// EnsurePlayer adds a player only if they are not already in the room's player map.
+// Used before each hand to guarantee late-joiners are included.
+func (e *Engine) EnsurePlayer(tableID int64, p PlayerState) {
+	e.mu.RLock()
+	room, ok := e.tables[tableID]
+	e.mu.RUnlock()
+	if !ok {
+		return
+	}
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	if _, exists := room.players[p.SeatNo]; !exists {
+		room.players[p.SeatNo] = &p
+	}
+}
+
 // UpdatePlayerChips updates a player's chip count in the room's persistent player map.
 // Called after each hand ends so the next hand starts with the correct chip count.
 func (e *Engine) UpdatePlayerChips(tableID int64, userID int64, chips int64) {

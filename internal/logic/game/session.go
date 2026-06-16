@@ -129,16 +129,36 @@ func startNextHand(ctx context.Context, tableID, sessionID int64, handIdx int) e
 	}
 	gameID, _ := result.LastInsertId()
 
-	// Insert game_players rows for every active seat
+	// Re-sync every seated player's chip count into the engine before each hand.
+	// This catches any desync between engine memory and DB (e.g. new joiners,
+	// rebuys that happened just after the last UpdatePlayerChips call).
 	type seatRow struct {
-		UserID int64 `orm:"user_id"`
-		SeatNo int   `orm:"seat_no"`
-		Chips  int64 `orm:"chips"`
+		UserID   int64  `orm:"user_id"`
+		SeatNo   int    `orm:"seat_no"`
+		Chips    int64  `orm:"chips"`
+		Nickname string `orm:"nickname"`
+		Avatar   string `orm:"avatar"`
 	}
 	var activeSeats []*seatRow
-	_ = g.DB().Model("table_seats").Fields("user_id,seat_no,chips").
-		Where("table_id", tableID).Where("status", 1).Scan(&activeSeats)
+	_ = g.DB().Model("table_seats ts").
+		LeftJoin("users u", "u.id = ts.user_id").
+		Fields("ts.user_id, ts.seat_no, ts.chips, u.nickname, u.avatar").
+		Where("ts.table_id", tableID).Where("ts.status", 1).Scan(&activeSeats)
+
+	eng := game.GlobalEngine()
 	for _, s := range activeSeats {
+		// Update chip count for existing engine players (corrects any desync).
+		eng.UpdatePlayerChips(tableID, s.UserID, s.Chips)
+		// Also ensure the player exists in the engine (catches late joiners).
+		eng.EnsurePlayer(tableID, game.PlayerState{
+			UserID:   s.UserID,
+			Nickname: s.Nickname,
+			Avatar:   s.Avatar,
+			SeatNo:   s.SeatNo,
+			Chips:    s.Chips,
+			Status:   game.PlayerActive,
+		})
+
 		_, _ = g.DB().Model("game_players").Data(g.Map{
 			"game_id":     gameID,
 			"user_id":     s.UserID,
@@ -147,7 +167,7 @@ func startNextHand(ctx context.Context, tableID, sessionID int64, handIdx int) e
 		}).Insert()
 	}
 
-	return game.GlobalEngine().StartHand(tableID, gameID, handNo, handIdx)
+	return eng.StartHand(tableID, gameID, handNo, handIdx)
 }
 
 // EndSession ends a running session and settles all players.

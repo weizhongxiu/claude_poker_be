@@ -238,9 +238,10 @@ func OnHandEnd(ctx context.Context, sessionID int64, result game.HandEndResult) 
 	broadcastHandResult(sessionID, tableID, result)
 	broadcastRankUpdate(sessionID, tableID)
 
-	// 8. Start next hand immediately after result broadcast (showdown already waited 5s).
+	// 8. Start next hand after result broadcast (showdown already waited 5s; add 2s for non-showdown hands).
 	if tableID > 0 {
 		go func() {
+			time.Sleep(2 * time.Second) // 让玩家看清结果
 			statusVal, _ := g.DB().Model("room_sessions").Fields("status").Where("id", sessionID).Value()
 			if statusVal.Int() != 1 {
 				return

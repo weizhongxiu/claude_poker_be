@@ -71,9 +71,15 @@
           <div class="community-area" v-if="game.state.stage >= 2">
             <div v-for="(card, i) in game.state.communityCards" :key="card + '_' + i"
               class="playing-card" :class="[cardColor(card), { 'card-flip': newCardIndexes.has(i) }]">
-              <span class="card-rank-top">{{ cardRank(card) }}</span>
+              <span class="card-corner-tl">
+                <span class="cc-rank">{{ cardRank(card) }}</span>
+                <span class="cc-suit">{{ cardSuit(card) }}</span>
+              </span>
               <span class="card-suit-mid">{{ cardSuit(card) }}</span>
-              <span class="card-rank-bot">{{ cardRank(card) }}</span>
+              <span class="card-corner-br">
+                <span class="cc-rank">{{ cardRank(card) }}</span>
+                <span class="cc-suit">{{ cardSuit(card) }}</span>
+              </span>
             </div>
           </div>
 
@@ -151,7 +157,7 @@
             'is-fold': mergedPlayers[seat.no].status === 2
           }">
 
-          <!-- 行动标签（下注/弃牌/All in 等） -->
+          <!-- 行动标签（跟注/下注/加注/ALL IN 等） -->
           <div v-if="mergedPlayers[seat.no]?.chips === 0 && mergedPlayers[seat.no]?.status !== 2 && game.state.stage > 0"
             class="action-badge act-allin allin-pulse">ALL IN</div>
           <div v-else-if="game.seatLastAction[seat.no]"
@@ -159,14 +165,13 @@
             :class="'act-' + game.seatLastAction[seat.no].type">
             {{ game.seatLastAction[seat.no].label }}
           </div>
+          <!-- 占位：无标签时保持高度不抖动 -->
+          <div v-else class="action-badge-placeholder"></div>
 
-          <!-- 玩家名 + 位置 + 庄家 -->
+          <!-- 玩家名 + 庄家 -->
           <div class="player-name">
             <span v-if="game.state.dealerSeat === seat.no && game.state.stage > 0" class="dealer-dot">D</span>
             {{ mergedPlayers[seat.no].nickname }}
-            <span v-if="seatPosition(seat.no)" class="pos-badge" :class="'pos-'+seatPosition(seat.no).toLowerCase()">
-              {{ seatPosition(seat.no) }}
-            </span>
           </div>
 
           <!-- 头像 -->
@@ -185,22 +190,29 @@
             <div v-if="mergedPlayers[seat.no].status === 2" class="fold-mask">弃牌</div>
           </div>
 
-          <!-- 筹码 -->
-          <div class="player-chips">{{ mergedPlayers[seat.no].chips }}</div>
-
-          <!-- 下注额 -->
-          <div v-if="mergedPlayers[seat.no].bet" class="bet-chip"
-            :class="{ 'bet-chip-fly': animatingBets.has(seat.no) }">
-            🪙 {{ mergedPlayers[seat.no].bet }}
+          <!-- 筹码余额 + 下注筹码（同一行） -->
+          <div class="player-chips-row">
+            <div class="player-chips">{{ mergedPlayers[seat.no].chips }}</div>
+            <div v-if="mergedPlayers[seat.no].bet" class="bet-chip"
+              :class="{ 'bet-chip-fly': animatingBets.has(seat.no) }">
+              <span class="bet-chip-disc"></span>
+              <span class="bet-chip-num">{{ mergedPlayers[seat.no].bet }}</span>
+            </div>
           </div>
           <!-- 手牌 -->
           <template v-if="seat.no === mySeat && game.myHoleCards?.length">
             <div class="hole-cards">
               <div v-for="(c, i) in game.myHoleCards" :key="i"
                 class="playing-card hole-mine" :class="cardColor(c)">
-                <span class="card-rank-top">{{ cardRank(c) }}</span>
+                <span class="card-corner-tl">
+                  <span class="cc-rank">{{ cardRank(c) }}</span>
+                  <span class="cc-suit">{{ cardSuit(c) }}</span>
+                </span>
                 <span class="card-suit-mid">{{ cardSuit(c) }}</span>
-                <span class="card-rank-bot">{{ cardRank(c) }}</span>
+                <span class="card-corner-br">
+                  <span class="cc-rank">{{ cardRank(c) }}</span>
+                  <span class="cc-suit">{{ cardSuit(c) }}</span>
+                </span>
               </div>
             </div>
             <div v-if="myLiveHandRank" class="my-hand-rank-badge">{{ myLiveHandRank }}</div>
@@ -210,9 +222,15 @@
             <div class="hole-cards">
               <div v-for="(c, i) in showdownSeat(seat.no).holeCards" :key="i"
                 class="playing-card hole-mine" :class="[cardColor(c), showdownSeat(seat.no).isWinner ? 'winner-card' : '']">
-                <span class="card-rank-top">{{ cardRank(c) }}</span>
+                <span class="card-corner-tl">
+                  <span class="cc-rank">{{ cardRank(c) }}</span>
+                  <span class="cc-suit">{{ cardSuit(c) }}</span>
+                </span>
                 <span class="card-suit-mid">{{ cardSuit(c) }}</span>
-                <span class="card-rank-bot">{{ cardRank(c) }}</span>
+                <span class="card-corner-br">
+                  <span class="cc-rank">{{ cardRank(c) }}</span>
+                  <span class="cc-suit">{{ cardSuit(c) }}</span>
+                </span>
               </div>
             </div>
             <div class="showdown-hand-label" :class="{ 'winner-label': showdownSeat(seat.no).isWinner }">
@@ -310,51 +328,74 @@
         <button class="rebuy-prompt-btn" @click="openRebuySheet()">立即补码</button>
       </div>
     </div>
-    <!-- 圆形行动按钮 -->
-    <div v-else-if="isMyTurn" class="action-float" :style="{ left: mySeatLeft }">
-      <div v-if="showRaiseSlider" class="raise-row">
-        <button class="preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), thirdPotRaise)">1/3</button>
-        <button class="preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), halfPotRaise)">1/2</button>
-        <button class="preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), twoThirdPotRaise)">2/3</button>
-        <button class="preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), pot1Raise)">底池</button>
-        <button class="preset allin" @click="raiseAmount = myChips + (game.state.players[mySeat]?.bet||0)">全押</button>
-        <input type="range" :min="minRaise" :max="myChips + (game.state.players[mySeat]?.bet||0)" v-model.number="raiseAmount"
-          class="raise-slider" :style="rangeStyle(raiseAmount, minRaise, myChips + (game.state.players[mySeat]?.bet||0))" />
-        <span class="raise-num">{{ raiseAmount }}</span>
-        <button class="close-raise" @click="showRaiseSlider = false">✕</button>
-      </div>
-      <div class="circle-btns-row">
-        <div class="circle-btn-wrap">
-          <button class="circle-btn circle-fold" @click="act('fold')">弃牌</button>
-        </div>
-        <div class="circle-btn-wrap circle-main-wrap">
-          <button class="circle-btn circle-call" :class="{ 'timer-urgent': timerPct < 0.2 }" @click="act(canCheck ? 'check' : 'call')">
-            <svg class="circle-timer-svg" viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="4"/>
-              <circle cx="50" cy="50" r="46" fill="none"
-                :stroke="timerPct < 0.2 ? '#ff4444' : 'rgba(255,255,255,.5)'" stroke-width="4"
-                stroke-dasharray="289" :stroke-dashoffset="289 - timerPct * 289"
-                stroke-linecap="round" transform="rotate(-90 50 50)"/>
-            </svg>
-            <span class="circle-btn-label">{{ canCheck ? '让牌' : `跟注` }}</span>
-            <span v-if="!canCheck && callAmount" class="circle-btn-sub">{{ callAmount }}</span>
-            <span class="circle-timer-sec">{{ timerSec }}s</span>
-          </button>
-        </div>
-        <div class="circle-btn-wrap">
-          <button class="circle-btn circle-raise" :class="{ 'raise-confirm': showRaiseSlider }" @click="onRaiseClick">
-            <span class="circle-btn-label">{{ showRaiseSlider ? `确认` : (canCheck ? '下注' : '加注') }}</span>
-            <span v-if="showRaiseSlider" class="circle-btn-sub">{{ raiseAmount }}</span>
-          </button>
-        </div>
-      </div>
-      <transition name="tools-slide">
-        <div v-if="showTools" class="pre-action-row">
-          <button class="pre-act-btn" :class="{ active: preAction === 'fold' }" @click="togglePreAction('fold')">下手弃牌</button>
-          <button class="pre-act-btn" :class="{ active: preAction === 'check' }" @click="togglePreAction('check')">{{ canCheck ? '下手过牌' : '弃牌过牌' }}</button>
-          <button class="pre-act-btn" :class="{ active: preAction === 'call' }" @click="togglePreAction('call')">跟任意注</button>
+    <!-- WePoker风格行动面板 -->
+    <div v-else-if="isMyTurn" class="wp-action-panel">
+      <!-- 加注面板（滑出） -->
+      <transition name="raise-panel-slide">
+        <div v-if="showRaiseSlider" class="wp-raise-panel">
+          <div class="wp-raise-amount-display">
+            <span class="wp-raise-label">{{ canCheck ? '下注金额' : '加注至' }}</span>
+            <span class="wp-raise-amount">{{ raiseAmount }}</span>
+          </div>
+          <div class="wp-presets">
+            <button class="wp-preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), thirdPotRaise)">
+              <span class="wp-preset-frac">1/3</span><span class="wp-preset-label">底池</span>
+            </button>
+            <button class="wp-preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), halfPotRaise)">
+              <span class="wp-preset-frac">1/2</span><span class="wp-preset-label">底池</span>
+            </button>
+            <button class="wp-preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), twoThirdPotRaise)">
+              <span class="wp-preset-frac">2/3</span><span class="wp-preset-label">底池</span>
+            </button>
+            <button class="wp-preset" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), pot1Raise)">
+              <span class="wp-preset-frac">1X</span><span class="wp-preset-label">底池</span>
+            </button>
+            <button class="wp-preset wp-preset-allin" @click="raiseAmount = myChips + (game.state.players[mySeat]?.bet||0)">
+              <span class="wp-preset-frac">全</span><span class="wp-preset-label">押</span>
+            </button>
+          </div>
+          <div class="wp-slider-row">
+            <button class="wp-adj-btn" @click="raiseAmount = Math.max(minRaise, raiseAmount - game.state.bigBlind)">−</button>
+            <input type="range" :min="minRaise" :max="myChips + (game.state.players[mySeat]?.bet||0)" v-model.number="raiseAmount"
+              class="wp-slider" />
+            <button class="wp-adj-btn" @click="raiseAmount = Math.min(myChips + (game.state.players[mySeat]?.bet||0), raiseAmount + game.state.bigBlind)">+</button>
+          </div>
         </div>
       </transition>
+
+      <!-- 主操作按钮行 -->
+      <div class="wp-btns-row">
+        <button class="wp-btn wp-btn-fold" @click="act('fold')">
+          <span class="wp-btn-main">弃牌</span>
+        </button>
+
+        <button class="wp-btn wp-btn-call" :class="{ 'wp-urgent': timerPct < 0.2 }" @click="act(canCheck ? 'check' : 'call')">
+          <!-- 倒计时弧线 -->
+          <svg class="wp-timer-svg" viewBox="0 0 200 56" preserveAspectRatio="none">
+            <rect x="1" y="1" width="198" height="54" rx="15" fill="none"
+              stroke="rgba(255,255,255,.15)" stroke-width="2"/>
+            <rect x="1" y="1" width="198" height="54" rx="15" fill="none"
+              :stroke="timerPct < 0.2 ? '#ff5252' : 'rgba(255,255,255,.45)'" stroke-width="2"
+              stroke-dasharray="500" :stroke-dashoffset="500 - timerPct * 500"
+              stroke-linecap="round"/>
+          </svg>
+          <span class="wp-btn-main">{{ canCheck ? '过牌' : '跟注' }}</span>
+          <span v-if="!canCheck && callAmount" class="wp-btn-sub">{{ callAmount }}</span>
+          <span class="wp-btn-timer">{{ timerSec }}s</span>
+        </button>
+
+        <button class="wp-btn" :class="showRaiseSlider ? 'wp-btn-confirm' : 'wp-btn-raise'" @click="onRaiseClick">
+          <span class="wp-btn-main">{{ showRaiseSlider ? '确认' : (canCheck ? '下注' : '加注') }}</span>
+          <span v-if="showRaiseSlider" class="wp-btn-sub">{{ raiseAmount }}</span>
+        </button>
+      </div>
+
+      <!-- 预选操作 -->
+      <div class="wp-pre-actions">
+        <button class="wp-pre-btn" :class="{ active: preAction === 'fold' }" @click="togglePreAction('fold')">下手弃牌</button>
+        <button class="wp-pre-btn" :class="{ active: preAction === 'check' }" @click="togglePreAction('check')">{{ canCheck ? '下手过牌' : '弃牌过牌' }}</button>
+        <button class="wp-pre-btn" :class="{ active: preAction === 'call' }" @click="togglePreAction('call')">跟任意注</button>
+      </div>
     </div>
 
     <!-- ══ 聊天面板 ══ -->
@@ -388,9 +429,15 @@
           <div v-if="youWinCards.length" class="youwin-cards">
             <div v-for="(c,i) in youWinCards" :key="i"
               class="playing-card hole-mine" :class="cardColor(c)">
-              <span class="card-rank-top">{{ cardRank(c) }}</span>
+              <span class="card-corner-tl">
+                <span class="cc-rank">{{ cardRank(c) }}</span>
+                <span class="cc-suit">{{ cardSuit(c) }}</span>
+              </span>
               <span class="card-suit-mid">{{ cardSuit(c) }}</span>
-              <span class="card-rank-bot">{{ cardRank(c) }}</span>
+              <span class="card-corner-br">
+                <span class="cc-rank">{{ cardRank(c) }}</span>
+                <span class="cc-suit">{{ cardSuit(c) }}</span>
+              </span>
             </div>
           </div>
           <div v-if="youWinHandRank" class="youwin-rank">{{ youWinHandRank }}</div>
@@ -903,7 +950,14 @@ const rankMap = { A:'A',K:'K',Q:'Q',J:'J',T:'10' }
 const suitMap = { h:'♥',d:'♦',c:'♣',s:'♠' }
 function cardRank(c) { return rankMap[c?.[0]] || c?.[0] || '' }
 function cardSuit(c) { return suitMap[c?.[c.length-1]] || '' }
-function cardColor(c) { return (c?.[c.length-1] === 'h' || c?.[c.length-1] === 'd') ? 'red' : 'black' }
+function cardColor(c) {
+  if (!c) return 'black'
+  const s = c.slice(-1).toLowerCase()
+  if (s === 'h') return 'red'
+  if (s === 'd') return 'blue-suit'
+  if (s === 'c') return 'green-suit'
+  return 'black'
+}
 
 // 阶段名称
 const STAGE_NAMES = { 1: '翻牌前', 2: '翻牌圈', 3: '转牌圈', 4: '河牌圈', 5: '摊牌' }
@@ -1450,6 +1504,10 @@ onUnmounted(() => {
 .community-area {
   display: flex; gap: 8px;
 }
+/* 公共牌比手牌大一档 */
+.community-area .playing-card {
+  width: 58px; height: 82px;
+}
 
 /* ── 牌通用 ── */
 .playing-card {
@@ -1464,31 +1522,43 @@ onUnmounted(() => {
 }
 .playing-card.red  { color: #cc0000; }
 .playing-card.black { color: #111; }
+.playing-card.blue-suit  { color: #1565c0; }
+.playing-card.green-suit { color: #2e7d32; }
 
-/* 左上角数字 */
-.card-rank-top {
-  font-size: 15px; font-weight: 900; line-height: 1;
-  align-self: flex-start;
+/* ── 牌角落 ── */
+.card-corner-tl {
+  position: absolute; top: 4px; left: 5px;
+  display: flex; flex-direction: column; align-items: center; line-height: 1;
 }
+.card-corner-br {
+  position: absolute; bottom: 4px; right: 5px;
+  display: flex; flex-direction: column; align-items: center; line-height: 1;
+  transform: rotate(180deg);
+}
+.cc-rank { font-size: 14px; font-weight: 900; line-height: 1; }
+.cc-suit { font-size: 10px; line-height: 1; }
+
 /* 中央大花色 */
 .card-suit-mid {
   font-size: 26px; line-height: 1;
   position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
 }
-/* 右下角倒置数字 */
-.card-rank-bot {
-  font-size: 15px; font-weight: 900; line-height: 1;
-  align-self: flex-end; transform: rotate(180deg);
-}
+
+/* 公共牌更大 */
+.community-area .cc-rank { font-size: 18px; }
+.community-area .cc-suit { font-size: 12px; }
+.community-area .card-suit-mid { font-size: 32px; }
+
+/* 自己手牌更大 */
+.playing-card.hole-mine .cc-rank { font-size: 18px; }
+.playing-card.hole-mine .cc-suit { font-size: 12px; }
+.playing-card.hole-mine .card-suit-mid { font-size: 32px; }
 
 /* 自己的手牌 — 较大 */
 .playing-card.hole-mine {
   width: 60px; height: 84px;
 }
-.playing-card.hole-mine .card-rank-top,
-.playing-card.hole-mine .card-rank-bot { font-size: 20px; }
-.playing-card.hole-mine .card-suit-mid { font-size: 34px; }
 
 /* ── 底池 ── */
 .pot-area {
@@ -1644,17 +1714,22 @@ onUnmounted(() => {
 
 /* 行动标签 */
 .action-badge {
-  font-size: 13px; font-weight: 700; border-radius: 12px;
-  padding: 3px 11px; margin-bottom: 3px; white-space: nowrap;
-  text-align: center; letter-spacing: .3px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  font-size: 12px; font-weight: 800; border-radius: 10px;
+  padding: 3px 10px; margin-bottom: 3px; white-space: nowrap;
+  text-align: center; letter-spacing: .5px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.5);
+  animation: badgePop .2s cubic-bezier(.34,1.56,.64,1);
 }
-.act-fold    { background: rgba(80,80,80,.9);  color: #ccc; }
-.act-check   { background: rgba(30,120,200,.9); color: #fff; }
-.act-call    { background: rgba(30,150,80,.9);  color: #fff; }
-.act-bet     { background: rgba(0,160,140,.9);  color: #fff; }
-.act-raise   { background: rgba(200,120,0,.9);  color: #fff; }
-.act-allin   { background: linear-gradient(135deg,#e53935,#c62828); color: #fff; }
+@keyframes badgePop {
+  from { transform: scale(.7); opacity: 0; }
+  to   { transform: scale(1);  opacity: 1; }
+}
+.act-fold    { background: rgba(70,70,70,.95);  color: #bbb; }
+.act-check   { background: linear-gradient(135deg,#1565c0,#0d47a1); color: #fff; }
+.act-call    { background: linear-gradient(135deg,#1565c0,#0d47a1); color: #fff; }
+.act-bet     { background: linear-gradient(135deg,#00897b,#00695c);  color: #fff; }
+.act-raise   { background: linear-gradient(135deg,#e65100,#bf360c);  color: #fff; }
+.act-allin   { background: linear-gradient(135deg,#e53935,#c62828);  color: #fff; }
 .act-blind   { background: rgba(60,60,60,.8);   color: #aaa; }
 .act-ante    { background: rgba(60,60,60,.8);   color: #aaa; }
 
@@ -1668,12 +1743,14 @@ onUnmounted(() => {
 
 /* 庄家标识 */
 .dealer-dot {
-  width: 16px; height: 16px; border-radius: 50%;
-  background: #fff; color: #1a1a1a;
-  font-size: 9px; font-weight: 900;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fff9c4, #f5c842);
+  color: #7a4f00;
+  font-size: 11px; font-weight: 900;
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 1px 4px rgba(0,0,0,.5);
+  box-shadow: 0 0 8px rgba(245,200,66,.9), 0 2px 6px rgba(0,0,0,.6);
+  border: 1.5px solid rgba(255,255,255,.8);
 }
 
 .player-avatar-wrap {
@@ -1730,15 +1807,35 @@ onUnmounted(() => {
   border: 1px solid rgba(255,255,255,.15);
 }
 
+.player-chips-row {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  flex-wrap: nowrap;
+}
 .bet-chip {
-  position: absolute; top: -22px;
-  background: linear-gradient(135deg, #f5c842, #e6a800);
-  color: #1a1a1a;
-  border-radius: 12px; padding: 3px 10px;
-  font-size: 13px; font-weight: 800;
-  box-shadow: 0 2px 10px rgba(245,200,66,.6), 0 1px 4px rgba(0,0,0,.4);
+  display: flex; align-items: center; gap: 3px;
   white-space: nowrap;
 }
+.bet-chip-fly { animation: betFly .35s cubic-bezier(.34,1.56,.64,1) both; }
+/* CSS 圆形筹码碟 */
+.bet-chip-disc {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  background: radial-gradient(circle at 38% 32%, #4dd9c0, #0a9e88);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0,180,150,.6), inset 0 1px 3px rgba(255,255,255,.4),
+              0 2px 6px rgba(0,0,0,.55);
+  position: relative;
+}
+.bet-chip-disc::after {
+  content: '';
+  position: absolute; inset: 2px; border-radius: 50%;
+  border: 1px dashed rgba(255,255,255,.5);
+}
+.bet-chip-num {
+  font-size: 13px; font-weight: 900; color: #f5c842;
+  text-shadow: 0 1px 4px rgba(0,0,0,.9);
+  line-height: 1;
+}
+.action-badge-placeholder { height: 24px; }
 .bet-chip-fly {
   animation: betFly .4s cubic-bezier(.34,1.56,.64,1) both;
 }
@@ -2271,4 +2368,166 @@ onUnmounted(() => {
 }
 .chip-float-enter-active { animation: chipFloatUp 1.8s ease-out forwards; }
 .chip-float-leave-active { opacity: 0; }
+
+/* ══ WePoker风格操作面板 ══ */
+.wp-action-panel {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 55;
+  display: flex; flex-direction: column;
+  background: rgba(8,18,28,.92);
+  border-top: 1px solid rgba(255,255,255,.1);
+  backdrop-filter: blur(12px);
+  padding-bottom: env(safe-area-inset-bottom, 8px);
+}
+
+/* 加注面板 */
+.wp-raise-panel {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.wp-raise-amount-display {
+  display: flex; align-items: baseline; gap: 10px;
+  justify-content: center;
+}
+.wp-raise-label {
+  font-size: 12px; color: rgba(255,255,255,.5); letter-spacing: .5px;
+}
+.wp-raise-amount {
+  font-size: 28px; font-weight: 800; color: #f5c842;
+  text-shadow: 0 0 12px rgba(245,200,66,.4);
+  min-width: 80px; text-align: center;
+}
+.wp-presets {
+  display: flex; gap: 6px; justify-content: center;
+}
+.wp-preset {
+  flex: 1; max-width: 68px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 10px;
+  padding: 6px 0; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  transition: background .15s, transform .1s;
+}
+.wp-preset:active { background: rgba(14,196,176,.4); transform: scale(.96); }
+.wp-preset-frac { font-size: 14px; font-weight: 800; color: #fff; line-height: 1; }
+.wp-preset-label { font-size: 9px; color: rgba(255,255,255,.55); line-height: 1; }
+.wp-preset-allin { background: rgba(229,57,53,.25); border-color: rgba(229,57,53,.4); }
+.wp-preset-allin .wp-preset-frac { color: #ef9a9a; }
+.wp-preset-allin:active { background: rgba(229,57,53,.5); }
+
+.wp-slider-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.wp-adj-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+  color: #fff; font-size: 20px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.wp-adj-btn:active { background: rgba(255,255,255,.25); }
+.wp-slider {
+  flex: 1;
+  -webkit-appearance: none; appearance: none;
+  height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.2);
+  outline: none;
+}
+.wp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fff, #d0d0d0);
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  cursor: pointer;
+}
+
+/* 主按钮行 */
+.wp-btns-row {
+  display: flex; gap: 8px;
+  padding: 10px 12px 4px;
+}
+.wp-btn {
+  flex: 1; height: 52px;
+  border: none; border-radius: 14px;
+  font-weight: 700; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; position: relative; overflow: hidden;
+  transition: transform .1s, opacity .1s;
+}
+.wp-btn:active { transform: scale(.96); opacity: .88; }
+
+.wp-btn-fold {
+  flex: 0.75;
+  background: linear-gradient(160deg, #b71c1c, #7f0000);
+  box-shadow: 0 4px 16px rgba(183,28,28,.5), inset 0 1px 0 rgba(255,255,255,.15);
+  color: #fff;
+}
+.wp-btn-call {
+  flex: 1.2;
+  background: linear-gradient(160deg, #1565c0, #0d47a1);
+  box-shadow: 0 4px 20px rgba(21,101,192,.6), inset 0 1px 0 rgba(255,255,255,.15);
+  color: #fff;
+}
+.wp-btn-raise {
+  flex: 0.9;
+  background: linear-gradient(160deg, #2e7d32, #1b5e20);
+  box-shadow: 0 4px 16px rgba(46,125,50,.5), inset 0 1px 0 rgba(255,255,255,.15);
+  color: #fff;
+}
+.wp-btn-confirm {
+  flex: 0.9;
+  background: linear-gradient(160deg, #e65100, #bf360c);
+  box-shadow: 0 4px 16px rgba(230,81,0,.6), inset 0 1px 0 rgba(255,255,255,.15);
+  color: #fff;
+  animation: confirmPop .4s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes confirmPop {
+  from { transform: scale(.9); }
+  to   { transform: scale(1); }
+}
+.wp-urgent {
+  background: linear-gradient(160deg, #c62828, #7f0000) !important;
+  animation: wpUrgentPulse .5s ease-in-out infinite alternate;
+}
+@keyframes wpUrgentPulse {
+  from { box-shadow: 0 4px 20px rgba(198,40,40,.5); }
+  to   { box-shadow: 0 4px 28px rgba(198,40,40,.9); }
+}
+
+.wp-btn-main { font-size: 16px; font-weight: 800; letter-spacing: .3px; position: relative; z-index: 1; }
+.wp-btn-sub  { font-size: 12px; opacity: .85; position: relative; z-index: 1; }
+.wp-btn-timer { font-size: 11px; opacity: .6; position: relative; z-index: 1; margin-top: 1px; }
+
+/* 倒计时矩形描边覆层 */
+.wp-timer-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+
+/* 加注面板滑入动画 */
+.raise-panel-slide-enter-active { animation: raisePanelIn .25s ease; }
+.raise-panel-slide-leave-active { animation: raisePanelIn .2s ease reverse; }
+@keyframes raisePanelIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 预选操作行 */
+.wp-pre-actions {
+  display: flex; gap: 6px; padding: 6px 12px 8px;
+  justify-content: center;
+}
+.wp-pre-btn {
+  font-size: 11px; padding: 4px 12px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.65);
+  cursor: pointer; transition: all .15s;
+}
+.wp-pre-btn.active {
+  background: rgba(14,196,176,.3); border-color: #0ec4b0;
+  color: #fff; font-weight: 700;
+}
 </style>
